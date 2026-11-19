@@ -1,0 +1,266 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    function isAdmin() {
+      return isAuthenticated() && (request.auth.token.admin == true || request.auth.token.role == 'admin');
+    }
+    function isProjectMember(memberIds) {
+      return isAuthenticated() && (request.auth.uid in memberIds);
+    }
+
+    // Users collection
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (
+        isOwner(userId) || 
+        resource.data.visibility == 'Public to members' || 
+        isAdmin()
+      );
+      allow create: if isOwner(userId);
+      allow update: if isOwner(userId) || (isAdmin() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['accountStatus', 'updatedAt']));
+      allow delete: if isOwner(userId) || isAdmin();
+    }
+
+    // Multiple Research Interests (Section 3.6)
+    match /researchInterests/{id} {
+      allow read: if isAuthenticated() && (
+        isOwner(resource.data.userId) || 
+        resource.data.visibility == 'Visible to members' ||
+        isAdmin()
+      );
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+
+    // Domain Taxonomy (Admin-managed)
+    match /domains/{id} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    // Learning Resources (Admin-managed)
+    match /learningResources/{id} {
+      allow read: if isAuthenticated() && (resource.data.status == 'Published' || isAdmin());
+      allow write: if isAdmin();
+    }
+
+    // Learning Resource Progress & Private Notes
+    match /resourceProgress/{id} {
+      allow read, write: if isAuthenticated() && (
+        (resource == null && request.resource.data.userId == request.auth.uid) ||
+        (resource != null && resource.data.userId == request.auth.uid)
+      );
+    }
+
+    // Publications
+    match /publications/{id} {
+      allow read: if isAuthenticated() && (
+        isOwner(resource.data.userId) || 
+        resource.data.visibility == 'Public to members'
+      );
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+
+    // Personal Paper Library (Section 6.3 - Private Notes must be owner-only!)
+    match /paperLibrary/{id} {
+      allow read, write: if isAuthenticated() && (
+        (resource == null && request.resource.data.userId == request.auth.uid) ||
+        (resource != null && resource.data.userId == request.auth.uid)
+      );
+    }
+
+    // Team Requests (Section 7.2)
+    match /teamRequests/{id} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && request.resource.data.ownerId == request.auth.uid;
+      allow update, delete: if isAuthenticated() && resource.data.ownerId == request.auth.uid;
+    }
+
+    // Team Applications
+    match /teamApplications/{id} {
+      allow read: if isAuthenticated() && (
+        resource.data.applicantId == request.auth.uid ||
+        get(/databases/$(database)/documents/teamRequests/$(resource.data.requestId)).data.ownerId == request.auth.uid ||
+        isAdmin()
+      );
+      allow create: if isAuthenticated() && request.resource.data.applicantId == request.auth.uid;
+      allow update: if isAuthenticated() && (
+        resource.data.applicantId == request.auth.uid ||
+        get(/databases/$(database)/documents/teamRequests/$(resource.data.requestId)).data.ownerId == request.auth.uid
+      );
+    }
+
+    // Projects (Section 9 - Collaboration Workspace, member-only access)
+    match /projects/{id} {
+      allow read: if isAuthenticated() && (
+        request.auth.uid in resource.data.memberIds ||
+        resource.data.ownerId == request.auth.uid ||
+        isAdmin()
+      );
+      allow create: if isAuthenticated() && request.resource.data.ownerId == request.auth.uid;
+      allow update: if isAuthenticated() && (
+        resource.data.ownerId == request.auth.uid || 
+        request.auth.uid in resource.data.memberIds
+      );
+      allow delete: if isAuthenticated() && resource.data.ownerId == request.auth.uid;
+
+      // Sub-collections: Tasks, Milestones, Files, Discussions
+      match /tasks/{taskId} {
+        allow read, write: if isAuthenticated() && (
+          request.auth.uid in get(/databases/$(database)/documents/projects/$(id)).data.memberIds
+        );
+      }
+      match /milestones/{milestoneId} {
+        allow read, write: if isAuthenticated() && (
+          request.auth.uid in get(/databases/$(database)/documents/projects/$(id)).data.memberIds
+        );
+      }
+      match /files/{fileId} {
+        allow read, write: if isAuthenticated() && (
+          request.auth.uid in get(/databases/$(database)/documents/projects/$(id)).data.memberIds
+        );
+      }
+      match /discussions/{msgId} {
+        allow read, write: if isAuthenticated() && (
+          request.auth.uid in get(/databases/$(database)/documents/projects/$(id)).data.memberIds
+        );
+      }
+    }
+
+    // Mentor Profiles & Requests
+    match /mentorProfiles/{userId} {
+      allow read: if isAuthenticated() && (
+        resource.data.visibility == 'Public to members' || 
+        isOwner(userId)
+      );
+      allow write: if isOwner(userId);
+    }
+
+    match /mentorRequests/{id} {
+      allow read: if isAuthenticated() && (
+        resource.data.menteeId == request.auth.uid || 
+        resource.data.mentorId == request.auth.uid
+      );
+      allow create: if isAuthenticated() && request.resource.data.menteeId == request.auth.uid;
+      allow update: if isAuthenticated() && (
+        resource.data.menteeId == request.auth.uid || 
+        resource.data.mentorId == request.auth.uid
+      );
+    }
+
+    // Groups & Members
+    match /groups/{id} {
+      allow read: if isAuthenticated() && (
+        resource.data.visibility == 'Discoverable' || 
+        resource.data.ownerId == request.auth.uid
+      );
+      allow create: if isAuthenticated() && request.resource.data.ownerId == request.auth.uid;
+      allow update, delete: if isAuthenticated() && (
+        resource.data.ownerId == request.auth.uid || 
+        isAdmin()
+      );
+    }
+
+    match /groupMembers/{id} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAuthenticated() && (
+        resource.data.userId == request.auth.uid || 
+        isAdmin()
+      );
+    }
+
+    // Community Feed Posts & Comments
+    match /posts/{id} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && request.resource.data.authorId == request.auth.uid;
+      allow update, delete: if isAuthenticated() && (
+        resource.data.authorId == request.auth.uid || 
+        isAdmin()
+      );
+    }
+
+    // WELL-BEING: Private Mood Check-ins (Section 10.1 - OWNER-ONLY! Strictly Private!)
+    match /moodEntries/{id} {
+      allow read, write: if isAuthenticated() && (
+        (resource == null && request.resource.data.userId == request.auth.uid) ||
+        (resource != null && resource.data.userId == request.auth.uid)
+      );
+      // NOTE: Admins do NOT have access to private mood entries as per Section 1.1 & 10.1!
+    }
+
+    // Peer Support Posts
+    match /supportPosts/{id} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && request.resource.data.authorId == request.auth.uid;
+      allow update, delete: if isAuthenticated() && (
+        resource.data.authorId == request.auth.uid || 
+        isAdmin()
+      );
+    }
+
+    // Opportunities & Academic Listings (Admin manual listings)
+    match /opportunities/{id} {
+      allow read: if isAuthenticated() && (resource.data.status == 'Published' || isAdmin());
+      allow write: if isAdmin();
+    }
+
+    // Saved Items
+    match /savedItems/{id} {
+      allow read, write: if isAuthenticated() && (
+        (resource == null && request.resource.data.userId == request.auth.uid) ||
+        (resource != null && resource.data.userId == request.auth.uid)
+      );
+    }
+
+    // In-app Notifications (Recipient-only)
+    match /notifications/{id} {
+      allow read, update, delete: if isAuthenticated() && resource.data.recipientId == request.auth.uid;
+      allow create: if isAuthenticated();
+    }
+
+    // Messaging & Connections
+    match /connections/{id} {
+      allow read: if isAuthenticated() && (
+        resource.data.requesterId == request.auth.uid || 
+        resource.data.recipientId == request.auth.uid
+      );
+      allow create: if isAuthenticated() && request.resource.data.requesterId == request.auth.uid;
+      allow update: if isAuthenticated() && (
+        resource.data.requesterId == request.auth.uid || 
+        resource.data.recipientId == request.auth.uid
+      );
+    }
+
+    match /conversations/{id} {
+      allow read, write: if isAuthenticated() && (request.auth.uid in resource.data.participantIds);
+      
+      match /messages/{msgId} {
+        allow read: if isAuthenticated() && (
+          request.auth.uid in get(/databases/$(database)/documents/conversations/$(id)).data.participantIds
+        );
+        allow create: if isAuthenticated() && (
+          request.auth.uid in get(/databases/$(database)/documents/conversations/$(id)).data.participantIds &&
+          request.resource.data.senderId == request.auth.uid
+        );
+      }
+    }
+
+    // Moderation Reports & Audit Logs
+    match /reports/{id} {
+      allow create: if isAuthenticated() && request.resource.data.reporterId == request.auth.uid;
+      allow read, update: if isAdmin();
+    }
+
+    match /adminAuditLogs/{id} {
+      allow read, write: if isAdmin();
+    }
+  }
+}
