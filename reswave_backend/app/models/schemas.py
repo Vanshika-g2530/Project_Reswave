@@ -382,3 +382,113 @@ class ModerationReport(ModerationReportCreate):
     assignedModerator: Optional[str] = None
     createdAt: str
     updatedAt: str
+
+# --- Section 6: My Network (Connections, Followers, Following) ---
+class ConnectionRequestCreate(BaseModel):
+    note: Optional[str] = Field(None, max_length=300)
+
+class ConnectionRequestResponse(BaseModel):
+    id: str
+    senderId: str
+    senderName: str
+    senderRole: Optional[str] = None
+    senderInstitution: Optional[str] = None
+    receiverId: str
+    receiverName: str
+    receiverRole: Optional[str] = None
+    receiverInstitution: Optional[str] = None
+    status: str = "PENDING"  # PENDING / ACCEPTED / DECLINED / WITHDRAWN
+    note: Optional[str] = None
+    createdAt: str
+    updatedAt: str
+
+class NetworkSummaryResponse(BaseModel):
+    connectionsCount: int = 0
+    followersCount: int = 0
+    followingCount: int = 0
+    pendingReceivedCount: int = 0
+
+# --- Section 8.2: Find a Mentor Questionnaire & Lifecycle ---
+class MentorQuestionnaireInput(BaseModel):
+    helpType: str
+    researchArea: List[str] = Field(default_factory=list)
+    academicLevel: str
+    currentStage: str
+    desiredOutcome: str
+    preferredFormat: str
+    frequency: str
+    duration: str
+    availability: str
+    additionalContext: Optional[str] = None
+
+class MentorDecisionRequest(BaseModel):
+    status: str  # ACCEPTED / DECLINED / NEEDS_INFO
+    reason: Optional[str] = None
+
+# --- Feed & Social Interactions ---
+class CommentCreate(BaseModel):
+    text: str = Field(..., min_length=1, max_length=1000)
+
+class CommentResponse(BaseModel):
+    id: str
+    postId: str
+    authorId: str
+    authorName: str
+    authorRole: Optional[str] = None
+    text: str
+    createdAt: str
+
+# --- Direct Messaging ---
+class SendMessageRequest(BaseModel):
+    recipientId: Optional[str] = None
+    text: str = Field(..., min_length=1, max_length=3000)
+    attachmentUrl: Optional[str] = None
+
+class MessageResponse(BaseModel):
+    id: str
+    conversationId: str
+    senderId: str
+    senderName: str
+    text: str
+    attachmentUrl: Optional[str] = None
+    createdAt: str
+    read: bool = False
+
+class ConversationResponse(BaseModel):
+    id: str
+    participants: List[str]
+    otherUserId: str
+    otherUserName: str
+    otherUserRole: Optional[str] = None
+    otherUserInstitution: Optional[str] = None
+    lastMessage: Optional[str] = None
+    lastMessageTime: Optional[str] = None
+    unreadCount: int = 0
+
+# --- Groups & Projects Creation ---
+class GroupCreate(BaseModel):
+    title: str = Field(..., min_length=3, max_length=80)
+    description: str = Field(..., max_length=1000)
+    primaryDomain: str
+    topics: List[str] = Field(default_factory=list)
+    purpose: str = "Research collaboration and discussion"
+    membershipMode: str = "Open"  # Open / Request to join / Invite-only
+    visibility: str = "Discoverable"
+    rules: str = "Be constructive, respect copyright, uphold academic integrity."
+
+class ProjectTaskCreate(BaseModel):
+    title: str = Field(..., min_length=2, max_length=150)
+    description: Optional[str] = None
+    assigneeId: Optional[str] = None
+    priority: str = "Medium"
+    dueDate: Optional[str] = None
+
+class ProjectMilestoneCreate(BaseModel):
+    title: str = Field(..., min_length=2, max_length=150)
+    description: Optional[str] = None
+    dueDate: Optional[str] = None
+
+class FCMTokenRequest(BaseModel):
+    token: str
+    deviceInfo: Optional[str] = None
+

@@ -1,9 +1,11 @@
 """
 RESWAVE - Cloud Firestore & Transaction Engine
-Implements atomic operations for team capacity, mentor reservation, and audit trails.
+Implements atomic operations for team capacity, mentor reservation, connection acceptance,
+follow relationships, and audit trails.
 """
 import os
 import json
+import uuid
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
 from ..core.memory_db import db, utc_now_iso
@@ -24,7 +26,7 @@ class FirestoreTransactionEngine:
     @staticmethod
     def atomic_accept_team_application(app_id: str, owner_uid: str) -> Dict[str, Any]:
         """
-        Section 7.2 & J:
+        Section 7.2 & 9:
         Atomically checks remaining capacity, decrements capacity, updates request status
         to 'Filled' if capacity == 0, adds member to project workspace, and returns updated objects.
         """
@@ -71,6 +73,18 @@ class FirestoreTransactionEngine:
             if app_rec["applicantId"] not in db.projects[proj_id]["memberIds"]:
                 db.projects[proj_id]["memberIds"].append(app_rec["applicantId"])
 
+        # Create notification for applicant
+        FirestoreTransactionEngine.atomic_create_notification(
+            recipient_id=app_rec["applicantId"],
+            notif_type="Team",
+            title="Team Application Accepted! 🎉",
+            body=f"You have been accepted to '{req['title']}'. Workspace access is now unlocked.",
+            target_type="project",
+            target_id=proj_id
+        )
+
+        db.save_to_disk()
+
         return {
             "status": "success",
             "application": app_rec,
@@ -81,7 +95,7 @@ class FirestoreTransactionEngine:
     @staticmethod
     def atomic_reserve_mentor_slot(mentor_id: str, mentee_id: str) -> Dict[str, Any]:
         """
-        Section 7.3:
+        Section 7.3 & 8.3:
         Atomically verifies mentor opt-in, availability, and capacity (>0),
         then reserves a slot and increments activeMenteesCount.
         """
@@ -102,4 +116,126 @@ class FirestoreTransactionEngine:
         if m_prof["activeMenteesCount"] >= max_cap:
             m_prof["availability"] = "Full"
 
+        db.save_to_disk()
         return {"status": "success", "mentorProfile": m_prof}
+
+    @staticmethod
+    def atomic_accept_connection_request(request_id: str, receiver_uid: str) -> Dict[str, Any]:
+        """
+        Section 6.1:
+        Atomically accepts a pending connection request:
+        - Validates that caller is the designated receiver
+        - Changes request status to ACCEPTED
+        - Creates the canonical bidirectional connection record
+        - Sends notifications to both parties
+        - Unlocks direct messaging capability
+        """
+        req = db.connectionRequests.get(request_id)
+        if not req:
+            raise ValueError("CONNECTION_REQUEST_NOT_FOUND")
+
+        if req["receiverId"] != receiver_uid:
+            raise PermissionError("PERMISSION_DENIED_NOT_RECEIVER")
+
+        if req["status"] != "PENDING":
+            raise ValueError(f"REQUEST_ALREADY_RESOLVED_STATUS_{req['status']}")
+
+        req["status"] = "ACCEPTED"
+        req["updatedAt"] = utc_now_iso()
+
+        # Generate canonical connection id: sorted pair ensures uniqueness
+        users_sorted = sorted([req["senderId"], req["receiverId"]])
+        conn_id = f"conn-{users_sorted[0]}-{users_sorted[1]}"
+        db.connections[conn_id] = {
+            "id": conn_id,
+            "userA": users_sorted[0],
+            "userB": users_sorted[1],
+            "connectedAt": utc_now_iso(),
+            "status": "ACTIVE"
+        }
+
+        # Send notification to sender
+        receiver_user = db.users.get(receiver_uid, {})
+        sender_user = db.users.get(req["senderId"], {})
+        rec_name = receiver_user.get("displayName", "Academic Peer")
+        send_name = sender_user.get("displayName", "Academic Peer")
+
+        FirestoreTransactionEngine.atomic_create_notification(
+            recipient_id=req["senderId"],
+            notif_type="Connection",
+            title="Connection Accepted! 🤝",
+            body=f"{rec_name} accepted your connection request. Direct messaging is now unlocked.",
+            target_type="user",
+            target_id=receiver_uid
+        )
+
+        db.save_to_disk()
+        return {
+            "status": "success",
+            "connection": db.connections[conn_id],
+            "request": req
+        }
+
+    @staticmethod
+    def atomic_toggle_follow(follower_id: str, target_id: str) -> Dict[str, Any]:
+        """
+        Section 6.2:
+        Follow or unfollow a discoverable user. Enforces uniqueness and prevents self-follow.
+        """
+        if follower_id == target_id:
+            raise ValueError("CANNOT_FOLLOW_SELF")
+
+        key = f"{follower_id}_{target_id}"
+        if key in db.follows:
+            # Unfollow
+            del db.follows[key]
+            db.save_to_disk()
+            return {"status": "unfollowed", "isFollowing": False}
+        else:
+            # Follow
+            db.follows[key] = {
+                "id": key,
+                "followerId": follower_id,
+                "targetId": target_id,
+                "createdAt": utc_now_iso()
+            }
+            # Notify target
+            follower = db.users.get(follower_id, {})
+            FirestoreTransactionEngine.atomic_create_notification(
+                recipient_id=target_id,
+                notif_type="Follow",
+                title="New Academic Follower",
+                body=f"{follower.get('displayName', 'A researcher')} started following your research updates.",
+                target_type="user",
+                target_id=follower_id
+            )
+            db.save_to_disk()
+            return {"status": "followed", "isFollowing": True}
+
+    @staticmethod
+    def atomic_create_notification(
+        recipient_id: str,
+        notif_type: str,
+        title: str,
+        body: str,
+        target_type: Optional[str] = None,
+        target_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Section 19:
+        Creates a persistent in-app notification record and pushes via FCM if registered.
+        """
+        nid = f"notif-{uuid.uuid4().hex[:10]}"
+        notif = {
+            "id": nid,
+            "recipientId": recipient_id,
+            "type": notif_type,
+            "title": title,
+            "body": body,
+            "targetType": target_type,
+            "targetId": target_id,
+            "read": False,
+            "createdAt": utc_now_iso()
+        }
+        db.notifications[nid] = notif
+        return notif

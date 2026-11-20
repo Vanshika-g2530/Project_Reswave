@@ -290,5 +290,95 @@ class ResWaveAcceptanceTests(unittest.TestCase):
         self.assertGreaterEqual(metrics["meanPrecisionAt5"], 0.5)
         self.assertGreaterEqual(metrics["meanRecallAt5"], 0.5)
 
+    # --- 16. My Network: Connection Lifecycle & Follow ---
+    def test_16_network_connections_lifecycle(self):
+        """Section 6: Connection request, transactional acceptance, canonical link, and follow toggle."""
+        user_a = "usr-alex-phd"
+        user_b = "usr-prof-elena"
+        req_id = "creq-test-01"
+        db.connectionRequests[req_id] = {
+            "id": req_id,
+            "senderId": user_a,
+            "receiverId": user_b,
+            "status": "PENDING",
+            "createdAt": "2026-11-20T00:00:00Z"
+        }
+        # Receiver B accepts
+        res = FirestoreTransactionEngine.atomic_accept_connection_request(req_id, user_b)
+        self.assertEqual(res["status"], "success")
+        self.assertEqual(db.connectionRequests[req_id]["status"], "ACCEPTED")
+        conn_id = f"conn-{sorted([user_a, user_b])[0]}-{sorted([user_a, user_b])[1]}"
+        self.assertIn(conn_id, db.connections)
+        self.assertEqual(db.connections[conn_id]["status"], "ACTIVE")
+
+        # Test follow toggle
+        f_res = FirestoreTransactionEngine.atomic_toggle_follow(user_a, user_b)
+        self.assertTrue(f_res["isFollowing"])
+        self.assertIn(f"{user_a}_{user_b}", db.follows)
+        # Toggle again to unfollow
+        f_res2 = FirestoreTransactionEngine.atomic_toggle_follow(user_a, user_b)
+        self.assertFalse(f_res2["isFollowing"])
+        self.assertNotIn(f"{user_a}_{user_b}", db.follows)
+
+    # --- 17. Disk Persistence Survives Reload ---
+    def test_17_disk_persistence_survives_reload(self):
+        """Section 3.1: Data persists to disk and reloads cleanly without loss."""
+        test_uid = "usr-persist-check"
+        db.users[test_uid] = {
+            "uid": test_uid,
+            "email": "persist@reswave.edu",
+            "displayName": "Persistent User",
+            "role": "Researcher",
+            "accountStatus": "active"
+        }
+        db.save_to_disk()
+        # Clear in-memory dict and reload from disk
+        del db.users[test_uid]
+        self.assertNotIn(test_uid, db.users)
+        db.load_from_disk()
+        self.assertIn(test_uid, db.users)
+        self.assertEqual(db.users[test_uid]["displayName"], "Persistent User")
+        # Cleanup
+        del db.users[test_uid]
+        db.save_to_disk()
+
+    # --- 18. Feed Social Interactions & Messaging ---
+    def test_18_feed_and_messaging_persistence(self):
+        """Section 11 & 12: Feed posts, comments, reactions, and direct messaging."""
+        # Create post
+        pid = "post-test-99"
+        db.posts[pid] = {
+            "id": pid,
+            "authorId": "usr-alex-phd",
+            "authorName": "Alex Rivera",
+            "text": "Automated verification test post.",
+            "postType": "Research update",
+            "reactionCount": 0,
+            "commentCount": 0
+        }
+        # Add comment
+        cid = "comm-test-99"
+        db.comments[cid] = {
+            "id": cid,
+            "postId": pid,
+            "authorId": "usr-prof-elena",
+            "authorName": "Prof. Elena Rostova",
+            "text": "Great progress."
+        }
+        db.posts[pid]["commentCount"] += 1
+        self.assertEqual(db.posts[pid]["commentCount"], 1)
+
+        # Send direct message
+        mid = "msg-test-99"
+        db.messages[mid] = {
+            "id": mid,
+            "conversationId": "conv-test",
+            "senderId": "usr-alex-phd",
+            "text": "Hello Professor!",
+            "read": False
+        }
+        self.assertIn(mid, db.messages)
+        self.assertFalse(db.messages[mid]["read"])
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

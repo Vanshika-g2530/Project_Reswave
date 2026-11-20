@@ -3,14 +3,16 @@ import '../../core/constants/app_colors.dart';
 import '../../models/user_model.dart';
 import '../home/home_dashboard_screen.dart';
 import '../discover/discover_screen.dart';
-import '../research_hub/domain_finder_screen.dart';
+import '../network/network_screen.dart';
 import '../projects/projects_screen.dart';
+import '../profile/profile_screen.dart';
+import '../research_hub/domain_finder_screen.dart';
 import '../wellbeing/wellbeing_screen.dart';
 import '../learning_hub/learning_hub_screen.dart';
 import '../papers/paper_library_screen.dart';
 import '../community/feed_screen.dart';
-import '../messages/chat_screen.dart';
-import '../profile/profile_screen.dart';
+import '../messages/conversations_screen.dart';
+import '../notifications/notification_center_screen.dart';
 import '../profile/interests_manager_screen.dart';
 import '../admin/admin_dashboard_screen.dart';
 
@@ -33,9 +35,9 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     _screens = [
       HomeDashboardScreen(user: widget.currentUser),
       const DiscoverScreen(),
-      const DomainFinderScreen(),
+      const NetworkScreen(),
       const ProjectsScreen(),
-      WellbeingScreen(user: widget.currentUser),
+      ProfileScreen(user: widget.currentUser),
     ];
   }
 
@@ -44,6 +46,25 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     final isAdmin = widget.currentUser.isAdmin || widget.currentUser.role.contains('Admin');
 
     return Scaffold(
+      appBar: AppBar(
+        title: const Text('ResWave', style: TextStyle(fontWeight: FontWeight.w800, letterSpacing: -0.5)),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.chat_bubble_outline_rounded),
+            tooltip: 'Messages',
+            onPressed: () {
+              Navigator.push(context, MaterialPageRoute(builder: (_) => const ConversationsScreen()));
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.notifications_none_rounded),
+            tooltip: 'Notifications',
+            onPressed: () {
+              Navigator.push(context, MaterialPageRoute(builder: (_) => const NotificationCenterScreen()));
+            },
+          ),
+        ],
+      ),
       drawer: Drawer(
         backgroundColor: AppColors.darkSurface,
         child: ListView(
@@ -68,8 +89,27 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
               ),
             ),
             ListTile(
+              leading: const Icon(Icons.compass_calibration_rounded, color: AppColors.brightTeal),
+              title: const Text('Research Domain Finder'),
+              subtitle: const Text('7-question interest questionnaire', style: TextStyle(fontSize: 11)),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.push(context, MaterialPageRoute(builder: (_) => const DomainFinderScreen()));
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.forum_rounded, color: AppColors.brightTeal),
+              title: const Text('Academic Community Feed'),
+              subtitle: const Text('Share research updates & questions', style: TextStyle(fontSize: 11)),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.push(context, MaterialPageRoute(builder: (_) => const FeedScreen()));
+              },
+            ),
+            ListTile(
               leading: const Icon(Icons.school_rounded, color: AppColors.brightTeal),
               title: const Text('Research Learning Hub'),
+              subtitle: const Text('Methodology & publishing guides', style: TextStyle(fontSize: 11)),
               onTap: () {
                 Navigator.pop(context);
                 Navigator.push(context, MaterialPageRoute(builder: (_) => const LearningHubScreen()));
@@ -78,33 +118,19 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
             ListTile(
               leading: const Icon(Icons.menu_book_rounded, color: AppColors.brightTeal),
               title: const Text('Personal Paper Library'),
+              subtitle: const Text('DOI tracking and private reading notes', style: TextStyle(fontSize: 11)),
               onTap: () {
                 Navigator.pop(context);
                 Navigator.push(context, MaterialPageRoute(builder: (_) => const PaperLibraryScreen()));
               },
             ),
             ListTile(
-              leading: const Icon(Icons.forum_rounded, color: AppColors.brightTeal),
-              title: const Text('Academic Community Feed'),
+              leading: const Icon(Icons.spa_rounded, color: AppColors.brightTeal),
+              title: const Text('Well-being & Peer Support'),
+              subtitle: const Text('100% confidential mood check-ins', style: TextStyle(fontSize: 11)),
               onTap: () {
                 Navigator.pop(context);
-                Navigator.push(context, MaterialPageRoute(builder: (_) => const FeedScreen()));
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.chat_bubble_outline_rounded, color: AppColors.brightTeal),
-              title: const Text('Academic Messages'),
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => const ChatScreen(
-                      conversationTitle: 'Prof. Elena Rostova',
-                      participantRole: 'Mentorship Collaboration',
-                    ),
-                  ),
-                );
+                Navigator.push(context, MaterialPageRoute(builder: (_) => WellbeingScreen(user: widget.currentUser)));
               },
             ),
             ListTile(
@@ -113,14 +139,6 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
               onTap: () {
                 Navigator.pop(context);
                 Navigator.push(context, MaterialPageRoute(builder: (_) => const InterestsManagerScreen()));
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.person_outline_rounded, color: AppColors.brightTeal),
-              title: const Text('Profile & Settings'),
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.push(context, MaterialPageRoute(builder: (_) => ProfileScreen(user: widget.currentUser)));
               },
             ),
             if (isAdmin) ...[
@@ -144,12 +162,13 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentIndex,
         onTap: (index) => setState(() => _currentIndex = index),
+        type: BottomNavigationBarType.fixed,
         items: const [
           BottomNavigationBarItem(icon: Icon(Icons.dashboard_rounded), label: 'Home'),
           BottomNavigationBarItem(icon: Icon(Icons.explore_rounded), label: 'Discover'),
-          BottomNavigationBarItem(icon: Icon(Icons.compass_calibration_rounded), label: 'Finder'),
-          BottomNavigationBarItem(icon: Icon(Icons.group_work_rounded), label: 'Teams'),
-          BottomNavigationBarItem(icon: Icon(Icons.spa_rounded), label: 'Well-being'),
+          BottomNavigationBarItem(icon: Icon(Icons.people_alt_rounded), label: 'Network'),
+          BottomNavigationBarItem(icon: Icon(Icons.group_work_rounded), label: 'Groups'),
+          BottomNavigationBarItem(icon: Icon(Icons.person_outline_rounded), label: 'Profile'),
         ],
       ),
     );
