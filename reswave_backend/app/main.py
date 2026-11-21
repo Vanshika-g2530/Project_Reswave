@@ -4,14 +4,28 @@ Version 3.0 | Complete Specification Implementation
 Single canonical backend serving Flutter Android application.
 """
 import uuid
-from typing import List, Dict, Any, Optional
+import logging
+from contextlib import asynccontextmanager
+from typing import AsyncGenerator, List, Dict, Any, Optional
 from fastapi import FastAPI, HTTPException, Header, Depends, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from .core.memory_db import db, utc_now_iso
 from .core.firestore_db import FirestoreTransactionEngine
-from .services.security import verify_bearer_token, require_admin
+from .services.security import (
+    is_local_mode,
+    verify_bearer_token,
+    verify_firebase_identity,
+    require_admin,
+)
+from .services.user_profile_store import (
+    UserProfileConflict,
+    create_or_get_user_profile,
+    get_user_profile,
+    list_user_profiles,
+    update_user_profile,
+)
 from .models.schemas import (
     UserCreate, UserResponse,
     ResearchInterestCreate, ResearchInterest,
@@ -35,10 +49,32 @@ from .services.matching_engine import (
 )
 from .services.seed_data import EMERGENCY_SUPPORT_RESOURCES
 
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncGenerator[None, None]:
+    if not is_local_mode():
+        try:
+            profiles = list_user_profiles()
+        except Exception as error:
+            logger.exception(
+                "Firestore user profile cache hydration failed (%s).",
+                type(error).__name__,
+            )
+        else:
+            for profile in profiles:
+                uid = profile.get("uid")
+                if uid:
+                    db.cache_user_profile(uid, profile, firestore_backed=True)
+    yield
+
+
 app = FastAPI(
     title="ResWave Mobile API Service",
     version="3.0.0",
-    description="Academic Research Journey & Community Application Backend"
+    description="Academic Research Journey & Community Application Backend",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -49,6 +85,80 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+def _load_user_profile(
+    uid: str,
+    legacy_profile: Optional[Dict[str, Any]] = None,
+    verified_email: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    if is_local_mode():
+        return db.users.get(uid)
+
+    try:
+        profile = get_user_profile(uid)
+        firestore_backed = profile is not None
+        if profile is None:
+            legacy_profile = legacy_profile or db.users.get(uid)
+            if not legacy_profile or legacy_profile.get("uid", uid) != uid:
+                return None
+            if not verified_email:
+                profile = legacy_profile
+            elif str(legacy_profile.get("email", "")).lower() != verified_email.lower():
+                return None
+            else:
+                profile = create_or_get_user_profile(uid, legacy_profile)
+                firestore_backed = True
+    except UserProfileConflict as error:
+        error_status = (
+            status.HTTP_403_FORBIDDEN
+            if error.code == "ACCOUNT_SUSPENDED"
+            else status.HTTP_409_CONFLICT
+        )
+        raise HTTPException(status_code=error_status, detail=error.code)
+    except Exception as error:
+        logger.exception(
+            "Firestore user profile read failed (%s).",
+            type(error).__name__,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="PROFILE_STORE_UNAVAILABLE",
+        )
+
+    if profile is not None:
+        db.cache_user_profile(uid, profile, firestore_backed=firestore_backed)
+    return profile
+
+
+def _persist_user_profile_updates(
+    uid: str,
+    updates: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    if is_local_mode():
+        profile = db.users.get(uid)
+        if profile is None:
+            return None
+        profile.update(updates)
+        db.save_to_disk()
+        return profile
+
+    try:
+        profile = update_user_profile(uid, updates)
+    except Exception as error:
+        logger.exception(
+            "Firestore user profile update failed (%s).",
+            type(error).__name__,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="PROFILE_STORE_UNAVAILABLE",
+        )
+
+    if profile is None:
+        return None
+    db.cache_user_profile(uid, profile, firestore_backed=True)
+    return profile
+
 # ==================== Health ====================
 @app.get("/health")
 def health_check():
@@ -57,90 +167,190 @@ def health_check():
 # ==================== Auth & Profile ====================
 class LoginRequest(BaseModel):
     email: str
-    password: str
+    password: Optional[str] = None
 
 @app.post("/v1/auth/signup")
-def signup(data: UserCreate):
-    for u in db.users.values():
-        if u["email"].lower() == data.email.lower():
+def signup(
+    data: UserCreate,
+    authorization: Optional[str] = Header(None),
+    firebase_uid: Optional[str] = Header(None, alias="X-Firebase-UID"),
+):
+    local_mode = is_local_mode()
+    if not authorization and not local_mode:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="FIREBASE_ID_TOKEN_REQUIRED",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    firebase_identity = (
+        verify_firebase_identity(authorization, firebase_uid)
+        if authorization
+        else None
+    )
+    uid = firebase_identity["uid"] if firebase_identity else f"usr-{uuid.uuid4().hex[:8]}"
+    if firebase_identity and firebase_identity.get("email"):
+        if firebase_identity["email"].lower() != data.email.lower():
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="FIREBASE_EMAIL_MISMATCH",
+            )
+
+    existing_user = db.users.get(uid)
+    if existing_user and existing_user["email"].lower() != data.email.lower():
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="UID_ALREADY_EXISTS")
+    if existing_user and existing_user.get("accountStatus") == "suspended":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="ACCOUNT_SUSPENDED")
+
+    for existing_uid, user in db.users.items():
+        if existing_uid != uid and user["email"].lower() == data.email.lower():
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="EMAIL_ALREADY_EXISTS")
-    
-    if data.role in ["Admin", "Admin / Moderator"]:
+
+    if not existing_user and data.role in ["Admin", "Admin / Moderator"]:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="CANNOT_SELF_ASSIGN_ADMIN")
 
-    uid = f"usr-{uuid.uuid4().hex[:8]}"
-    now = utc_now_iso()
-    user_record = {
-        "uid": uid,
-        "email": data.email.lower(),
-        "displayName": data.displayName.strip(),
-        "role": data.role,
-        "headline": data.headline,
-        "bio": data.bio,
-        "country": data.country,
-        "city": data.city,
-        "institution": data.institution,
-        "department": data.department,
-        "visibility": data.visibility,
-        "discoverable": data.discoverable,
-        "preferredCollaborationMode": data.preferredCollaborationMode,
-        "notificationPreferences": data.notificationPreferences,
-        "roleDetails": data.roleDetails,
-        "termsAccepted": data.termsAccepted,
-        "termsAcceptedVersion": "3.0",
-        "termsAcceptedAt": now,
-        "emailVerified": False,
-        "accountStatus": "active",
-        "isAdmin": False,
-        "createdAt": now,
-        "updatedAt": now
-    }
-    db.users[uid] = user_record
-    db.save_to_disk()
+    if existing_user:
+        candidate = existing_user
+    else:
+        now = utc_now_iso()
+        candidate = {
+            "uid": uid,
+            "email": data.email.lower(),
+            "displayName": data.displayName.strip(),
+            "role": data.role,
+            "headline": data.headline,
+            "bio": data.bio,
+            "country": data.country,
+            "city": data.city,
+            "institution": data.institution,
+            "department": data.department,
+            "visibility": data.visibility,
+            "discoverable": data.discoverable,
+            "preferredCollaborationMode": data.preferredCollaborationMode,
+            "notificationPreferences": data.notificationPreferences,
+            "roleDetails": data.roleDetails,
+            "termsAccepted": data.termsAccepted,
+            "termsAcceptedVersion": "3.0",
+            "termsAcceptedAt": now,
+            "emailVerified": firebase_identity.get("emailVerified", False) if firebase_identity else False,
+            "accountStatus": "active",
+            "isAdmin": False,
+            "createdAt": now,
+            "updatedAt": now,
+        }
+
+    if local_mode:
+        db.cache_user_profile(uid, candidate)
+        db.save_to_disk()
+        user_record = candidate
+    else:
+        try:
+            user_record = create_or_get_user_profile(uid, candidate)
+        except UserProfileConflict as error:
+            error_status = (
+                status.HTTP_403_FORBIDDEN
+                if error.code == "ACCOUNT_SUSPENDED"
+                else status.HTTP_409_CONFLICT
+            )
+            raise HTTPException(status_code=error_status, detail=error.code)
+        except Exception as error:
+            logger.exception(
+                "Firestore signup profile persistence failed (%s).",
+                type(error).__name__,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="PROFILE_STORE_UNAVAILABLE",
+            )
+        db.cache_user_profile(uid, user_record, firestore_backed=True)
+
     return {"status": "success", "user": user_record, "token": uid}
 
 @app.post("/v1/auth/login")
-def login(data: LoginRequest):
-    for u in db.users.values():
-        if u["email"].lower() == data.email.lower():
-            if u.get("accountStatus") == "suspended":
+def login(
+    data: LoginRequest,
+    authorization: Optional[str] = Header(None),
+    firebase_uid: Optional[str] = Header(None, alias="X-Firebase-UID"),
+):
+    if authorization:
+        firebase_identity = verify_firebase_identity(authorization, firebase_uid)
+        if firebase_identity.get("email") and firebase_identity["email"].lower() != data.email.lower():
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="FIREBASE_EMAIL_MISMATCH",
+            )
+        uid = firebase_identity["uid"]
+        user = _load_user_profile(
+            uid,
+            db.users.get(uid),
+            verified_email=data.email,
+        )
+        if not user or user["email"].lower() != data.email.lower():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="RESWAVE_PROFILE_NOT_FOUND",
+            )
+        if user.get("accountStatus") == "suspended":
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="ACCOUNT_SUSPENDED")
+        return {"status": "success", "user": user, "token": user["uid"]}
+
+    for user in db.users.values():
+        if user["email"].lower() == data.email.lower():
+            if user.get("accountStatus") == "suspended":
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="ACCOUNT_SUSPENDED")
-            return {"status": "success", "user": u, "token": u["uid"]}
+            return {"status": "success", "user": user, "token": user["uid"]}
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="INVALID_CREDENTIALS")
 
 @app.post("/v1/auth/verify-email")
 def verify_email(user: Dict[str, Any] = Depends(verify_bearer_token)):
-    u_rec = db.users.get(user["uid"])
+    u_rec = _load_user_profile(
+        user["uid"],
+        verified_email=user.get("email"),
+    )
     if u_rec:
-        u_rec["emailVerified"] = True
-        u_rec["updatedAt"] = utc_now_iso()
-        db.save_to_disk()
+        updates = {"emailVerified": True, "updatedAt": utc_now_iso()}
+        _persist_user_profile_updates(user["uid"], updates)
     return {"status": "success", "emailVerified": True}
 
 @app.get("/v1/users/me")
 def get_my_profile(user: Dict[str, Any] = Depends(verify_bearer_token)):
-    u_rec = db.users.get(user["uid"])
+    u_rec = _load_user_profile(
+        user["uid"],
+        verified_email=user.get("email"),
+    )
     if not u_rec:
         raise HTTPException(status_code=404, detail="USER_NOT_FOUND")
     return u_rec
 
 @app.put("/v1/users/me")
 def update_my_profile(updates: Dict[str, Any], user: Dict[str, Any] = Depends(verify_bearer_token)):
-    u_rec = db.users.get(user["uid"])
+    uid = user["uid"]
+    u_rec = _load_user_profile(uid, verified_email=user.get("email"))
     if not u_rec:
         raise HTTPException(status_code=404, detail="USER_NOT_FOUND")
+    updates = dict(updates)
     for key in ["uid", "email", "isAdmin", "createdAt"]:
         updates.pop(key, None)
     if "role" in updates and updates["role"] in ["Admin", "Admin / Moderator"]:
         updates.pop("role")
-    u_rec.update(updates)
-    u_rec["updatedAt"] = utc_now_iso()
-    db.save_to_disk()
-    return u_rec
+    updates["updatedAt"] = utc_now_iso()
+    return _persist_user_profile_updates(uid, updates)
 
 @app.delete("/v1/users/me")
 def delete_my_account(user: Dict[str, Any] = Depends(verify_bearer_token)):
     uid = user["uid"]
+    u_rec = _load_user_profile(uid, verified_email=user.get("email"))
+    if u_rec:
+        _persist_user_profile_updates(
+            uid,
+            {
+                "displayName": "Former Member",
+                "accountStatus": "deleted",
+                "discoverable": False,
+                "visibility": "Private",
+                "updatedAt": utc_now_iso(),
+            },
+        )
     # 1. Permanently delete private mood records
     mood_ids = [mid for mid, m in db.moodEntries.items() if m.get("userId") == uid]
     for mid in mood_ids:
@@ -157,18 +367,12 @@ def delete_my_account(user: Dict[str, Any] = Depends(verify_bearer_token)):
     follow_keys = [k for k, f in db.follows.items() if f.get("followerId") == uid or f.get("targetId") == uid]
     for k in follow_keys:
         del db.follows[k]
-    # 5. Anonymize user record
-    if uid in db.users:
-        db.users[uid]["displayName"] = "Former Member"
-        db.users[uid]["accountStatus"] = "deleted"
-        db.users[uid]["discoverable"] = False
-        db.users[uid]["visibility"] = "Private"
     db.save_to_disk()
     return {"status": "deleted", "userId": uid}
 
 @app.get("/v1/users/{uid}")
 def get_user_public_profile(uid: str, user: Dict[str, Any] = Depends(verify_bearer_token)):
-    u_rec = db.users.get(uid)
+    u_rec = _load_user_profile(uid)
     if not u_rec:
         raise HTTPException(status_code=404, detail="USER_NOT_FOUND")
     is_owner = (uid == user["uid"])
@@ -242,35 +446,87 @@ def list_domains():
 
 @app.post("/v1/domain-recommendations")
 def get_domain_recommendations(answers: QuestionnaireInput):
+
     ans_dict = answers.dict()
-    valid_dims = 0
-    for k in ["subjects", "problems", "workStyles", "skills", "goals"]:
-        v = [x for x in ans_dict.get(k, []) if x and x.lower() not in ["not sure", "skip"]]
-        if v:
-            valid_dims += 1
-    is_exploratory = (valid_dims < 2)
+
+    valid_dims = sum(
+        1 for key in [
+            "subjects",
+            "problems",
+            "workStyles",
+            "skills",
+            "goals"
+        ]
+        if any(
+            str(x).strip().lower()
+            not in ["", "not sure", "skip", "other"]
+            for x in ans_dict.get(key, [])
+        )
+    )
+
+    is_exploratory = valid_dims < 2
 
     results = []
-    for d in db.domains.values():
-        score, reasons = score_domain_against_questionnaire(d, ans_dict, is_exploratory=is_exploratory)
-        fit_band = determine_fit_band(score)
+
+    for domain in db.domains.values():
+
+        score, reasons = score_domain_against_questionnaire(
+            domain,
+            ans_dict,
+            is_exploratory=is_exploratory
+        )
+
+        fit_band = determine_fit_band(
+            score,
+            is_exploratory=is_exploratory
+        )
+
+        # Fetch resources linked to this domain
+        resource_ids = domain.get("learningResourceIds", [])
+
+        beginner_resources = []
+
+        for resource_id in resource_ids:
+
+            resource = db.learningResources.get(resource_id)
+
+            if resource and resource.get("status") == "Published":
+                beginner_resources.append(resource["title"])
+
+        related_groups = [
+            group["title"]
+            for group in db.groups.values()
+            if group.get("primaryDomain") == domain["id"]
+        ]
+
         results.append({
-            "domainId": d["id"],
-            "name": d["name"],
-            "description": d["shortDescription"],
+            "domainId": domain["id"],
+            "name": domain["name"],
+            "description": domain["shortDescription"],
             "score": score,
             "fitBand": fit_band,
             "reasons": reasons,
-            "subdomains": d.get("subdomains", []),
-            "commonMethods": d.get("commonMethods", []),
-            "sampleQuestions": d.get("sampleResearchQuestions", []),
-            "relatedGroups": [g["title"] for g in db.groups.values() if g.get("primaryDomain") == d["id"]]
+
+            # Flutter model expects these exact names
+            "sampleTopics": domain.get("subdomains", []),
+            "requiredSkills": domain.get("skillTags", []),
+            "beginnerResources": beginner_resources,
+
+            # Additional information
+            "sampleQuestions": domain.get(
+                "sampleResearchQuestions", []
+            ),
+            "commonMethods": domain.get("commonMethods", []),
+            "relatedGroups": related_groups
         })
 
     if not is_exploratory:
-        results.sort(key=lambda x: x["score"], reverse=True)
-    return results
+        results.sort(
+            key=lambda item: item["score"],
+            reverse=True
+        )
 
+    return results
 # ==================== Learning Hub (Section 5) ====================
 @app.get("/v1/learning/resources")
 def list_learning_resources(
@@ -764,9 +1020,25 @@ def decide_mentor_request(req_id: str, data: MentorDecisionRequest, user: Dict[s
         req["status"] = "Declined"
         req["declineReason"] = data.reason
         req["decidedAt"] = utc_now_iso()
+        FirestoreTransactionEngine.atomic_create_notification(
+            recipient_id=req["menteeId"],
+            notif_type="Mentorship",
+            title="Mentorship Request Update",
+            body=f"{req.get('mentorName', 'Your mentor')} declined your mentorship request.",
+            target_type="mentorRequest",
+            target_id=req_id
+        )
     elif decision == "NEEDS_INFO":
         req["status"] = "Clarification"
         req["clarificationNote"] = data.reason
+        FirestoreTransactionEngine.atomic_create_notification(
+            recipient_id=req["menteeId"],
+            notif_type="Mentorship",
+            title="More Information Requested",
+            body=f"{req.get('mentorName', 'Your mentor')} requested more information about your mentorship request.",
+            target_type="mentorRequest",
+            target_id=req_id
+        )
     req["updatedAt"] = utc_now_iso()
     db.save_to_disk()
     return req
@@ -877,14 +1149,30 @@ def decide_team_application(app_id: str, decision: Dict[str, str], user: Dict[st
             raise HTTPException(status_code=409, detail=str(ve))
         except PermissionError as pe:
             raise HTTPException(status_code=403, detail=str(pe))
-    else:
-        app_rec = db.teamApplications.get(app_id)
-        if not app_rec:
-            raise HTTPException(status_code=404, detail="APPLICATION_NOT_FOUND")
-        app_rec["status"] = new_status
-        app_rec["decidedAt"] = utc_now_iso()
-        db.save_to_disk()
-        return {"status": "success", "application": app_rec}
+
+    app_rec = db.teamApplications.get(app_id)
+    if not app_rec:
+        raise HTTPException(status_code=404, detail="APPLICATION_NOT_FOUND")
+    team_req = db.teamRequests.get(app_rec["requestId"])
+    if not team_req:
+        raise HTTPException(status_code=404, detail="REQUEST_NOT_FOUND")
+    if team_req["ownerId"] != user["uid"] and not user.get("isAdmin", False):
+        raise HTTPException(status_code=403, detail="OWNER_ONLY_ACCESS")
+    if new_status != "Declined":
+        raise HTTPException(status_code=400, detail="INVALID_APPLICATION_DECISION")
+
+    app_rec["status"] = "Declined"
+    app_rec["decidedAt"] = utc_now_iso()
+    FirestoreTransactionEngine.atomic_create_notification(
+        recipient_id=app_rec["applicantId"],
+        notif_type="Team",
+        title="Team Application Update",
+        body=f"Your application to '{team_req['title']}' was declined.",
+        target_type="teamApplication",
+        target_id=app_id
+    )
+    db.save_to_disk()
+    return {"status": "success", "application": app_rec}
 
 # ==================== Collaboration Workspace & Tasks (Section 9) ====================
 @app.get("/v1/projects")
@@ -914,16 +1202,21 @@ def add_project_task(proj_id: str, data: ProjectTaskCreate, user: Dict[str, Any]
     proj = db.projects.get(proj_id)
     if not proj:
         raise HTTPException(status_code=404, detail="PROJECT_NOT_FOUND")
-    if user["uid"] not in proj.get("memberIds", []) and not user.get("isAdmin", False):
+    if user["uid"] not in proj.get("memberIds", []) and proj["ownerId"] != user["uid"] and not user.get("isAdmin", False):
         raise HTTPException(status_code=403, detail="MEMBER_ONLY_ACCESS")
     tid = f"task-{uuid.uuid4().hex[:8]}"
-    u_rec = db.users.get(data.assigneeId or user["uid"], {})
+    assignee_id = data.assigneeId or user["uid"]
+    project_members = set(proj.get("memberIds", []))
+    project_members.add(proj["ownerId"])
+    if assignee_id not in project_members:
+        raise HTTPException(status_code=400, detail="ASSIGNEE_NOT_PROJECT_MEMBER")
+    u_rec = db.users.get(assignee_id, {})
     rec = {
         "id": tid,
         "projectId": proj_id,
         "title": data.title,
         "description": data.description,
-        "assigneeId": data.assigneeId or user["uid"],
+        "assigneeId": assignee_id,
         "assigneeName": u_rec.get("displayName", "Member"),
         "priority": data.priority,
         "dueDate": data.dueDate,
@@ -931,6 +1224,16 @@ def add_project_task(proj_id: str, data: ProjectTaskCreate, user: Dict[str, Any]
         "createdAt": utc_now_iso()
     }
     db.tasks[tid] = rec
+    if assignee_id != user["uid"]:
+        actor = db.users.get(user["uid"], {})
+        FirestoreTransactionEngine.atomic_create_notification(
+            recipient_id=assignee_id,
+            notif_type="Team",
+            title="New Project Task",
+            body=f"{actor.get('displayName', 'A project member')} assigned you '{data.title}'.",
+            target_type="project",
+            target_id=proj_id
+        )
     db.save_to_disk()
     return rec
 
@@ -939,8 +1242,32 @@ def update_project_task(proj_id: str, task_id: str, updates: Dict[str, Any], use
     task = db.tasks.get(task_id)
     if not task or task.get("projectId") != proj_id:
         raise HTTPException(status_code=404, detail="TASK_NOT_FOUND")
+    project = db.projects.get(proj_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="PROJECT_NOT_FOUND")
+    if user["uid"] not in project.get("memberIds", []) and project["ownerId"] != user["uid"] and not user.get("isAdmin", False):
+        raise HTTPException(status_code=403, detail="MEMBER_ONLY_ACCESS")
+    if "projectId" in updates and updates["projectId"] != proj_id:
+        raise HTTPException(status_code=400, detail="PROJECT_ID_CANNOT_BE_CHANGED")
+    if "id" in updates and updates["id"] != task_id:
+        raise HTTPException(status_code=400, detail="TASK_ID_CANNOT_BE_CHANGED")
+    if "assigneeId" in updates and updates["assigneeId"] is not None:
+        project_members = set(project.get("memberIds", []))
+        project_members.add(project["ownerId"])
+        if updates["assigneeId"] not in project_members:
+            raise HTTPException(status_code=400, detail="ASSIGNEE_NOT_PROJECT_MEMBER")
     task.update(updates)
     task["updatedAt"] = utc_now_iso()
+    assignee_id = task.get("assigneeId")
+    if assignee_id and assignee_id != user["uid"]:
+        FirestoreTransactionEngine.atomic_create_notification(
+            recipient_id=assignee_id,
+            notif_type="Team",
+            title="Project Task Updated",
+            body=f"'{task.get('title', 'A project task')}' was updated.",
+            target_type="project",
+            target_id=proj_id
+        )
     db.save_to_disk()
     return task
 
@@ -971,6 +1298,18 @@ def add_project_milestone(proj_id: str, data: ProjectMilestoneCreate, user: Dict
         "createdAt": utc_now_iso()
     }
     db.milestones[mid] = rec
+    member_ids = set(proj.get("memberIds", []))
+    member_ids.add(proj["ownerId"])
+    actor = db.users.get(user["uid"], {})
+    for member_id in member_ids - {user["uid"]}:
+        FirestoreTransactionEngine.atomic_create_notification(
+            recipient_id=member_id,
+            notif_type="Team",
+            title="Project Milestone Added",
+            body=f"{actor.get('displayName', 'A project member')} added '{data.title}'.",
+            target_type="project",
+            target_id=proj_id
+        )
     db.save_to_disk()
     return rec
 
@@ -1035,6 +1374,18 @@ def join_group(group_id: str, user: Dict[str, Any] = Depends(verify_bearer_token
             "joinedAt": now
         }
         grp["memberCount"] = grp.get("memberCount", 1) + 1
+        actor = db.users.get(uid, {})
+        group_managers = set(grp.get("moderators", []))
+        group_managers.add(grp["ownerId"])
+        for manager_id in group_managers - {uid}:
+            FirestoreTransactionEngine.atomic_create_notification(
+                recipient_id=manager_id,
+                notif_type="Group",
+                title="New Group Member",
+                body=f"{actor.get('displayName', 'A researcher')} joined '{grp['title']}'.",
+                target_type="group",
+                target_id=group_id
+            )
         db.save_to_disk()
         return {"status": "joined", "role": "Member"}
     else:
@@ -1334,14 +1685,25 @@ def mark_all_notifications_read(user: Dict[str, Any] = Depends(verify_bearer_tok
 
 @app.post("/v1/notifications/fcm-token")
 def register_fcm_token(data: FCMTokenRequest, user: Dict[str, Any] = Depends(verify_bearer_token)):
-    db.fcmTokens[user["uid"]] = {
-        "userId": user["uid"],
-        "token": data.token,
-        "deviceInfo": data.deviceInfo,
-        "updatedAt": utc_now_iso()
-    }
-    db.save_to_disk()
-    return {"status": "registered"}
+    from .services.notification_service import FCMNotificationService
+
+    device_count = FCMNotificationService.register_device_token(
+        user_id=user["uid"],
+        token=data.token,
+        device_info=data.deviceInfo,
+    )
+    return {"status": "registered", "deviceCount": device_count}
+
+
+@app.delete("/v1/notifications/fcm-token")
+def unregister_fcm_token(data: FCMTokenRequest, user: Dict[str, Any] = Depends(verify_bearer_token)):
+    from .services.notification_service import FCMNotificationService
+
+    removed = FCMNotificationService.remove_device_token(
+        user_id=user["uid"],
+        token=data.token,
+    )
+    return {"status": "removed" if removed else "not_found"}
 
 # ==================== Mobile Admin & Platform Governance (Section 13) ====================
 @app.post("/v1/reports")

@@ -35,6 +35,7 @@ class MemoryDatabase:
     def reset(self, save_disk: bool = False):
         with self._lock:
             self.users: Dict[str, Dict[str, Any]] = {}
+            self._firestore_user_ids: set[str] = set()
             self.researchInterests: Dict[str, Dict[str, Any]] = {}
             self.domains: Dict[str, Dict[str, Any]] = {}
             self.learningResources: Dict[str, Dict[str, Any]] = {}
@@ -71,6 +72,17 @@ class MemoryDatabase:
             self._seed_initial_data()
             if save_disk:
                 self.save_to_disk()
+
+    def cache_user_profile(
+        self,
+        uid: str,
+        profile: Dict[str, Any],
+        firestore_backed: bool = False,
+    ):
+        with self._lock:
+            self.users[uid] = profile
+            if firestore_backed:
+                self._firestore_user_ids.add(uid)
 
     def _seed_initial_data(self):
         # 1. Domains
@@ -269,7 +281,11 @@ class MemoryDatabase:
         with self._lock:
             try:
                 data = {
-                    "users": self.users,
+                    "users": {
+                        uid: user
+                        for uid, user in self.users.items()
+                        if uid not in self._firestore_user_ids
+                    },
                     "researchInterests": self.researchInterests,
                     "domains": self.domains,
                     "learningResources": self.learningResources,

@@ -5,7 +5,7 @@ import '../models/research_interest.dart';
 import '../models/domain_model.dart';
 import '../models/learning_resource.dart';
 import '../models/paper_item.dart';
-import '../models/team_request.dart';
+import '../models/team_request.dart' hide ProjectModel;
 import '../models/mood_entry.dart';
 import '../models/opportunity.dart';
 import '../models/network_models.dart';
@@ -30,64 +30,90 @@ class ResWaveApiService {
   ResWaveApiService._internal();
 
   // Android emulator points to host localhost at 10.0.2.2; standard localhost for local runners
-  static String baseUrl = 'http://10.0.2.2:8000';
+  static String baseUrl = 'http://192.168.29.204:8000';
 
   String? _token;
+  String? _firebaseUid;
   UserModel? currentUser;
 
   bool get isAuthenticated => currentUser != null && _token != null;
 
-  void setAuth(UserModel user, String token) {
+  void setAuth(UserModel user, String token, {String? firebaseUid}) {
     currentUser = user;
     _token = token;
+    _firebaseUid = firebaseUid;
+  }
+
+  void setFirebaseCredentials(String uid, String idToken) {
+    _firebaseUid = uid;
+    _token = idToken;
   }
 
   void logout() {
     currentUser = null;
     _token = null;
+    _firebaseUid = null;
   }
 
   Map<String, String> get _headers => {
         'Content-Type': 'application/json',
         if (_token != null) 'Authorization': 'Bearer $_token',
+        if (_firebaseUid != null) 'X-Firebase-UID': _firebaseUid!,
       };
 
   // ==================== Auth & Profile ====================
-  Future<UserModel> login(String email, String password) async {
+  Future<UserModel> loginWithFirebase({
+    required String email,
+    required String firebaseUid,
+    required String firebaseIdToken,
+  }) async {
     final response = await http.post(
       Uri.parse('$baseUrl/v1/auth/login'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'email': email, 'password': password}),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $firebaseIdToken',
+        'X-Firebase-UID': firebaseUid,
+      },
+      body: jsonEncode({'email': email}),
     );
 
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
       final user = UserModel.fromJson(data['user']);
-      setAuth(user, data['token']);
+      if (user.uid != firebaseUid) {
+        throw ResWaveApiException(
+            'The ResWave profile does not match this Firebase account.');
+      }
+      setAuth(user, firebaseIdToken, firebaseUid: firebaseUid);
       return user;
     } else {
       final error = jsonDecode(response.body);
-      throw ResWaveApiException(error['detail'] ?? 'Login failed', response.statusCode);
+      throw ResWaveApiException(
+          error['detail'] ?? 'Login failed', response.statusCode);
     }
   }
 
-  Future<UserModel> signup({
+  Future<UserModel> signupWithFirebase({
     required String name,
     required String email,
-    required String password,
     required String role,
     required String country,
     String? city,
     String? institution,
     String? department,
+    required String firebaseUid,
+    required String firebaseIdToken,
   }) async {
     final response = await http.post(
       Uri.parse('$baseUrl/v1/auth/signup'),
-      headers: {'Content-Type': 'application/json'},
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $firebaseIdToken',
+        'X-Firebase-UID': firebaseUid,
+      },
       body: jsonEncode({
         'displayName': name,
         'email': email,
-        'password': password,
         'role': role,
         'country': country,
         'city': city,
@@ -100,16 +126,22 @@ class ResWaveApiService {
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
       final user = UserModel.fromJson(data['user']);
-      setAuth(user, data['token']);
+      if (user.uid != firebaseUid) {
+        throw ResWaveApiException(
+            'The ResWave profile does not match this Firebase account.');
+      }
+      setAuth(user, firebaseIdToken, firebaseUid: firebaseUid);
       return user;
     } else {
       final error = jsonDecode(response.body);
-      throw ResWaveApiException(error['detail'] ?? 'Registration failed', response.statusCode);
+      throw ResWaveApiException(
+          error['detail'] ?? 'Registration failed', response.statusCode);
     }
   }
 
   Future<UserModel> getMyProfile() async {
-    final res = await http.get(Uri.parse('$baseUrl/v1/users/me'), headers: _headers);
+    final res =
+        await http.get(Uri.parse('$baseUrl/v1/users/me'), headers: _headers);
     if (res.statusCode == 200) {
       final user = UserModel.fromJson(jsonDecode(res.body));
       currentUser = user;
@@ -135,7 +167,8 @@ class ResWaveApiService {
   }
 
   Future<void> deleteMyAccount() async {
-    final res = await http.delete(Uri.parse('$baseUrl/v1/users/me'), headers: _headers);
+    final res =
+        await http.delete(Uri.parse('$baseUrl/v1/users/me'), headers: _headers);
     if (res.statusCode == 200) {
       logout();
     } else {
@@ -145,12 +178,14 @@ class ResWaveApiService {
 
   // ==================== Research Interests (Section 3.6) ====================
   Future<List<ResearchInterest>> getMyInterests() async {
-    final res = await http.get(Uri.parse('$baseUrl/v1/users/me/interests'), headers: _headers);
+    final res = await http.get(Uri.parse('$baseUrl/v1/users/me/interests'),
+        headers: _headers);
     if (res.statusCode == 200) {
       final List list = jsonDecode(res.body);
       return list.map((e) => ResearchInterest.fromJson(e)).toList();
     } else {
-      throw ResWaveApiException('Failed to load research interests', res.statusCode);
+      throw ResWaveApiException(
+          'Failed to load research interests', res.statusCode);
     }
   }
 
@@ -163,29 +198,34 @@ class ResWaveApiService {
     if (res.statusCode == 200) {
       return ResearchInterest.fromJson(jsonDecode(res.body));
     } else {
-      throw ResWaveApiException('Failed to save research interest', res.statusCode);
+      throw ResWaveApiException(
+          'Failed to save research interest', res.statusCode);
     }
   }
 
   Future<void> deleteInterest(String intId) async {
-    final res = await http.delete(Uri.parse('$baseUrl/v1/users/me/interests/$intId'), headers: _headers);
+    final res = await http.delete(
+        Uri.parse('$baseUrl/v1/users/me/interests/$intId'),
+        headers: _headers);
     if (res.statusCode != 200) {
-      throw ResWaveApiException('Failed to remove research interest', res.statusCode);
+      throw ResWaveApiException(
+          'Failed to remove research interest', res.statusCode);
     }
   }
 
   // ==================== Domain Recommendations (Section 4) ====================
-  Future<List<DomainTaxonomy>> getDomains() async {
+  Future<List<DomainModel>> getDomains() async {
     final res = await http.get(Uri.parse('$baseUrl/v1/domains'));
     if (res.statusCode == 200) {
       final List list = jsonDecode(res.body);
-      return list.map((e) => DomainTaxonomy.fromJson(e)).toList();
+      return list.map((e) => DomainModel.fromJson(e)).toList();
     } else {
       throw ResWaveApiException('Failed to fetch taxonomy', res.statusCode);
     }
   }
 
-  Future<List<DomainRecommendationResult>> getDomainRecommendations(Map<String, dynamic> questionnaire) async {
+  Future<List<DomainRecommendationResult>> getDomainRecommendations(
+      Map<String, dynamic> questionnaire) async {
     final res = await http.post(
       Uri.parse('$baseUrl/v1/domain-recommendations'),
       headers: {'Content-Type': 'application/json'},
@@ -195,31 +235,36 @@ class ResWaveApiService {
       final List list = jsonDecode(res.body);
       return list.map((e) => DomainRecommendationResult.fromJson(e)).toList();
     } else {
-      throw ResWaveApiException('Failed to calculate domain recommendations', res.statusCode);
+      throw ResWaveApiException(
+          'Failed to calculate domain recommendations', res.statusCode);
     }
   }
 
   // ==================== Learning Hub (Section 5) ====================
-  Future<List<LearningResource>> getLearningResources({String? domain, String? level, String? format, String? query}) async {
+  Future<List<LearningResource>> getLearningResources(
+      {String? domain, String? level, String? format, String? query}) async {
     final params = <String, String>{};
     if (domain != null && domain.isNotEmpty) params['domain'] = domain;
     if (level != null && level.isNotEmpty) params['level'] = level;
     if (format != null && format.isNotEmpty) params['format'] = format;
     if (query != null && query.isNotEmpty) params['query'] = query;
 
-    final uri = Uri.parse('$baseUrl/v1/learning/resources').replace(queryParameters: params);
+    final uri = Uri.parse('$baseUrl/v1/learning/resources')
+        .replace(queryParameters: params);
     final res = await http.get(uri);
     if (res.statusCode == 200) {
       final List list = jsonDecode(res.body);
       return list.map((e) => LearningResource.fromJson(e)).toList();
     } else {
-      throw ResWaveApiException('Failed to load learning resources', res.statusCode);
+      throw ResWaveApiException(
+          'Failed to load learning resources', res.statusCode);
     }
   }
 
   // ==================== Paper Library (Section 6.3) ====================
   Future<List<PaperItem>> getMyPapers() async {
-    final res = await http.get(Uri.parse('$baseUrl/v1/papers'), headers: _headers);
+    final res =
+        await http.get(Uri.parse('$baseUrl/v1/papers'), headers: _headers);
     if (res.statusCode == 200) {
       final List list = jsonDecode(res.body);
       return list.map((e) => PaperItem.fromJson(e)).toList();
@@ -242,55 +287,65 @@ class ResWaveApiService {
   }
 
   Future<void> deletePaper(String paperId) async {
-    final res = await http.delete(Uri.parse('$baseUrl/v1/papers/$paperId'), headers: _headers);
+    final res = await http.delete(Uri.parse('$baseUrl/v1/papers/$paperId'),
+        headers: _headers);
     if (res.statusCode != 200) {
       throw ResWaveApiException('Failed to delete paper', res.statusCode);
     }
   }
 
   // ==================== Smart Matching (Section 7) ====================
-  Future<List<dynamic>> getResearcherMatches({String? domainId, String? topics, String? mode}) async {
+  Future<List<dynamic>> getResearcherMatches(
+      {String? domainId, String? topics, String? mode}) async {
     final params = <String, String>{};
     if (domainId != null) params['domainId'] = domainId;
     if (topics != null) params['topics'] = topics;
     if (mode != null) params['mode'] = mode;
 
-    final uri = Uri.parse('$baseUrl/v1/matches/researchers').replace(queryParameters: params);
+    final uri = Uri.parse('$baseUrl/v1/matches/researchers')
+        .replace(queryParameters: params);
     final res = await http.get(uri, headers: _headers);
     if (res.statusCode == 200) {
       return jsonDecode(res.body);
     } else {
-      throw ResWaveApiException('Failed to fetch researcher matches', res.statusCode);
+      throw ResWaveApiException(
+          'Failed to fetch researcher matches', res.statusCode);
     }
   }
 
-  Future<List<dynamic>> getMentorMatches({String? topics, String? helpType, String? level}) async {
+  Future<List<dynamic>> getMentorMatches(
+      {String? topics, String? helpType, String? level}) async {
     final params = <String, String>{};
     if (topics != null) params['topics'] = topics;
     if (helpType != null) params['helpType'] = helpType;
     if (level != null) params['level'] = level;
 
-    final uri = Uri.parse('$baseUrl/v1/matches/mentors').replace(queryParameters: params);
+    final uri = Uri.parse('$baseUrl/v1/matches/mentors')
+        .replace(queryParameters: params);
     final res = await http.get(uri, headers: _headers);
     if (res.statusCode == 200) {
       return jsonDecode(res.body);
     } else {
-      throw ResWaveApiException('Failed to fetch mentor matches', res.statusCode);
+      throw ResWaveApiException(
+          'Failed to fetch mentor matches', res.statusCode);
     }
   }
 
   // ==================== My Network: Connections, Followers, Following (Section 6) ====================
   Future<NetworkSummaryModel> getNetworkSummary() async {
-    final res = await http.get(Uri.parse('$baseUrl/v1/network/summary'), headers: _headers);
+    final res = await http.get(Uri.parse('$baseUrl/v1/network/summary'),
+        headers: _headers);
     if (res.statusCode == 200) {
       return NetworkSummaryModel.fromJson(jsonDecode(res.body));
     } else {
-      throw ResWaveApiException('Failed to load network summary', res.statusCode);
+      throw ResWaveApiException(
+          'Failed to load network summary', res.statusCode);
     }
   }
 
   Future<List<ConnectionModel>> getConnections() async {
-    final res = await http.get(Uri.parse('$baseUrl/v1/network/connections'), headers: _headers);
+    final res = await http.get(Uri.parse('$baseUrl/v1/network/connections'),
+        headers: _headers);
     if (res.statusCode == 200) {
       final List list = jsonDecode(res.body);
       return list.map((e) => ConnectionModel.fromJson(e)).toList();
@@ -300,7 +355,8 @@ class ResWaveApiService {
   }
 
   Future<List<FollowerModel>> getFollowers() async {
-    final res = await http.get(Uri.parse('$baseUrl/v1/network/followers'), headers: _headers);
+    final res = await http.get(Uri.parse('$baseUrl/v1/network/followers'),
+        headers: _headers);
     if (res.statusCode == 200) {
       final List list = jsonDecode(res.body);
       return list.map((e) => FollowerModel.fromJson(e)).toList();
@@ -310,7 +366,8 @@ class ResWaveApiService {
   }
 
   Future<List<FollowerModel>> getFollowing() async {
-    final res = await http.get(Uri.parse('$baseUrl/v1/network/following'), headers: _headers);
+    final res = await http.get(Uri.parse('$baseUrl/v1/network/following'),
+        headers: _headers);
     if (res.statusCode == 200) {
       final List list = jsonDecode(res.body);
       return list.map((e) => FollowerModel.fromJson(e)).toList();
@@ -320,7 +377,8 @@ class ResWaveApiService {
   }
 
   Future<List<ConnectionRequestModel>> getSentRequests() async {
-    final res = await http.get(Uri.parse('$baseUrl/v1/network/requests/sent'), headers: _headers);
+    final res = await http.get(Uri.parse('$baseUrl/v1/network/requests/sent'),
+        headers: _headers);
     if (res.statusCode == 200) {
       final List list = jsonDecode(res.body);
       return list.map((e) => ConnectionRequestModel.fromJson(e)).toList();
@@ -330,16 +388,20 @@ class ResWaveApiService {
   }
 
   Future<List<ConnectionRequestModel>> getReceivedRequests() async {
-    final res = await http.get(Uri.parse('$baseUrl/v1/network/requests/received'), headers: _headers);
+    final res = await http.get(
+        Uri.parse('$baseUrl/v1/network/requests/received'),
+        headers: _headers);
     if (res.statusCode == 200) {
       final List list = jsonDecode(res.body);
       return list.map((e) => ConnectionRequestModel.fromJson(e)).toList();
     } else {
-      throw ResWaveApiException('Failed to load received requests', res.statusCode);
+      throw ResWaveApiException(
+          'Failed to load received requests', res.statusCode);
     }
   }
 
-  Future<ConnectionRequestModel> sendConnectionRequest(String targetUid, {String? note}) async {
+  Future<ConnectionRequestModel> sendConnectionRequest(String targetUid,
+      {String? note}) async {
     final res = await http.post(
       Uri.parse('$baseUrl/v1/network/connect/$targetUid'),
       headers: _headers,
@@ -349,53 +411,67 @@ class ResWaveApiService {
       return ConnectionRequestModel.fromJson(jsonDecode(res.body));
     } else {
       final err = jsonDecode(res.body);
-      throw ResWaveApiException(err['detail'] ?? 'Failed to send request', res.statusCode);
+      throw ResWaveApiException(
+          err['detail'] ?? 'Failed to send request', res.statusCode);
     }
   }
 
   Future<void> acceptConnectionRequest(String requestId) async {
-    final res = await http.post(Uri.parse('$baseUrl/v1/network/connect/$requestId/accept'), headers: _headers);
+    final res = await http.post(
+        Uri.parse('$baseUrl/v1/network/connect/$requestId/accept'),
+        headers: _headers);
     if (res.statusCode != 200) {
       final err = jsonDecode(res.body);
-      throw ResWaveApiException(err['detail'] ?? 'Failed to accept connection', res.statusCode);
+      throw ResWaveApiException(
+          err['detail'] ?? 'Failed to accept connection', res.statusCode);
     }
   }
 
   Future<void> declineConnectionRequest(String requestId) async {
-    final res = await http.post(Uri.parse('$baseUrl/v1/network/connect/$requestId/decline'), headers: _headers);
+    final res = await http.post(
+        Uri.parse('$baseUrl/v1/network/connect/$requestId/decline'),
+        headers: _headers);
     if (res.statusCode != 200) {
       throw ResWaveApiException('Failed to decline connection', res.statusCode);
     }
   }
 
   Future<void> withdrawConnectionRequest(String requestId) async {
-    final res = await http.post(Uri.parse('$baseUrl/v1/network/connect/$requestId/withdraw'), headers: _headers);
+    final res = await http.post(
+        Uri.parse('$baseUrl/v1/network/connect/$requestId/withdraw'),
+        headers: _headers);
     if (res.statusCode != 200) {
       throw ResWaveApiException('Failed to withdraw request', res.statusCode);
     }
   }
 
   Future<bool> toggleFollow(String targetUid) async {
-    final res = await http.post(Uri.parse('$baseUrl/v1/network/follow/$targetUid'), headers: _headers);
+    final res = await http.post(
+        Uri.parse('$baseUrl/v1/network/follow/$targetUid'),
+        headers: _headers);
     if (res.statusCode == 200) {
       final data = jsonDecode(res.body);
       return data['isFollowing'] ?? true;
     } else {
-      throw ResWaveApiException('Failed to update follow status', res.statusCode);
+      throw ResWaveApiException(
+          'Failed to update follow status', res.statusCode);
     }
   }
 
   // ==================== Mentor System (Section 8) ====================
   Future<MentorProfileModel> getMentorProfile() async {
-    final res = await http.get(Uri.parse('$baseUrl/v1/mentor/profile'), headers: _headers);
+    final res = await http.get(Uri.parse('$baseUrl/v1/mentor/profile'),
+        headers: _headers);
     if (res.statusCode == 200) {
       return MentorProfileModel.fromJson(jsonDecode(res.body));
     } else {
-      throw ResWaveApiException('Failed to load mentor profile', res.statusCode);
+      throw ResWaveApiException(
+          'Failed to load mentor profile', res.statusCode);
     }
   }
 
-  Future<MentorProfileModel> updateMentorProfile(Map<String, dynamic> updates) async {
+  Future<MentorProfileModel> updateMentorProfile(
+      Map<String, dynamic> updates) async {
     final res = await http.put(
       Uri.parse('$baseUrl/v1/mentor/profile'),
       headers: _headers,
@@ -404,7 +480,8 @@ class ResWaveApiService {
     if (res.statusCode == 200) {
       return MentorProfileModel.fromJson(jsonDecode(res.body));
     } else {
-      throw ResWaveApiException('Failed to update mentor profile', res.statusCode);
+      throw ResWaveApiException(
+          'Failed to update mentor profile', res.statusCode);
     }
   }
 
@@ -434,31 +511,38 @@ class ResWaveApiService {
     );
     if (res.statusCode != 200) {
       final err = jsonDecode(res.body);
-      throw ResWaveApiException(err['detail'] ?? 'Failed to submit mentor request', res.statusCode);
+      throw ResWaveApiException(
+          err['detail'] ?? 'Failed to submit mentor request', res.statusCode);
     }
   }
 
   Future<List<MentorRequestModel>> getSentMentorRequests() async {
-    final res = await http.get(Uri.parse('$baseUrl/v1/mentor/requests/sent'), headers: _headers);
+    final res = await http.get(Uri.parse('$baseUrl/v1/mentor/requests/sent'),
+        headers: _headers);
     if (res.statusCode == 200) {
       final List list = jsonDecode(res.body);
       return list.map((e) => MentorRequestModel.fromJson(e)).toList();
     } else {
-      throw ResWaveApiException('Failed to load sent mentor requests', res.statusCode);
+      throw ResWaveApiException(
+          'Failed to load sent mentor requests', res.statusCode);
     }
   }
 
   Future<List<MentorRequestModel>> getReceivedMentorRequests() async {
-    final res = await http.get(Uri.parse('$baseUrl/v1/mentor/requests/received'), headers: _headers);
+    final res = await http.get(
+        Uri.parse('$baseUrl/v1/mentor/requests/received'),
+        headers: _headers);
     if (res.statusCode == 200) {
       final List list = jsonDecode(res.body);
       return list.map((e) => MentorRequestModel.fromJson(e)).toList();
     } else {
-      throw ResWaveApiException('Failed to load received mentor requests', res.statusCode);
+      throw ResWaveApiException(
+          'Failed to load received mentor requests', res.statusCode);
     }
   }
 
-  Future<void> decideMentorRequest(String reqId, String status, {String? reason}) async {
+  Future<void> decideMentorRequest(String reqId, String status,
+      {String? reason}) async {
     final res = await http.post(
       Uri.parse('$baseUrl/v1/mentor/requests/$reqId/decision'),
       headers: _headers,
@@ -466,12 +550,14 @@ class ResWaveApiService {
     );
     if (res.statusCode != 200) {
       final err = jsonDecode(res.body);
-      throw ResWaveApiException(err['detail'] ?? 'Failed to update request', res.statusCode);
+      throw ResWaveApiException(
+          err['detail'] ?? 'Failed to update request', res.statusCode);
     }
   }
 
   // ==================== Academic Feed (Section 11) ====================
-  Future<List<FeedPostModel>> getFeed({String? domain, String? postType}) async {
+  Future<List<FeedPostModel>> getFeed(
+      {String? domain, String? postType}) async {
     final params = <String, String>{};
     if (domain != null && domain.isNotEmpty) params['domain'] = domain;
     if (postType != null && postType.isNotEmpty) params['post_type'] = postType;
@@ -510,7 +596,9 @@ class ResWaveApiService {
   }
 
   Future<bool> reactToPost(String postId) async {
-    final res = await http.post(Uri.parse('$baseUrl/v1/feed/posts/$postId/react'), headers: _headers);
+    final res = await http.post(
+        Uri.parse('$baseUrl/v1/feed/posts/$postId/react'),
+        headers: _headers);
     if (res.statusCode == 200) {
       final data = jsonDecode(res.body);
       return data['hasReacted'] ?? false;
@@ -520,7 +608,8 @@ class ResWaveApiService {
   }
 
   Future<List<CommentModel>> getPostComments(String postId) async {
-    final res = await http.get(Uri.parse('$baseUrl/v1/feed/posts/$postId/comments'));
+    final res =
+        await http.get(Uri.parse('$baseUrl/v1/feed/posts/$postId/comments'));
     if (res.statusCode == 200) {
       final List list = jsonDecode(res.body);
       return list.map((e) => CommentModel.fromJson(e)).toList();
@@ -544,7 +633,8 @@ class ResWaveApiService {
 
   // ==================== Direct Messaging (Section 12) ====================
   Future<List<ConversationModel>> getConversations() async {
-    final res = await http.get(Uri.parse('$baseUrl/v1/messages/conversations'), headers: _headers);
+    final res = await http.get(Uri.parse('$baseUrl/v1/messages/conversations'),
+        headers: _headers);
     if (res.statusCode == 200) {
       final List list = jsonDecode(res.body);
       return list.map((e) => ConversationModel.fromJson(e)).toList();
@@ -567,7 +657,10 @@ class ResWaveApiService {
   }
 
   Future<List<MessageModel>> getMessages(String conversationId) async {
-    final res = await http.get(Uri.parse('$baseUrl/v1/messages/conversations/$conversationId/messages'), headers: _headers);
+    final res = await http.get(
+        Uri.parse(
+            '$baseUrl/v1/messages/conversations/$conversationId/messages'),
+        headers: _headers);
     if (res.statusCode == 200) {
       final List list = jsonDecode(res.body);
       return list.map((e) => MessageModel.fromJson(e)).toList();
@@ -591,7 +684,8 @@ class ResWaveApiService {
 
   // ==================== Teams, Projects & Groups (Sections 9 & 10) ====================
   Future<List<TeamRequestModel>> getTeamRequests({String? domain}) async {
-    final uri = Uri.parse('$baseUrl/v1/team-requests${domain != null ? '?domain=$domain' : ''}');
+    final uri = Uri.parse(
+        '$baseUrl/v1/team-requests${domain != null ? '?domain=$domain' : ''}');
     final res = await http.get(uri);
     if (res.statusCode == 200) {
       final List list = jsonDecode(res.body);
@@ -601,7 +695,8 @@ class ResWaveApiService {
     }
   }
 
-  Future<TeamRequestModel> createTeamRequest(Map<String, dynamic> requestData) async {
+  Future<TeamRequestModel> createTeamRequest(
+      Map<String, dynamic> requestData) async {
     final res = await http.post(
       Uri.parse('$baseUrl/v1/team-requests'),
       headers: _headers,
@@ -611,7 +706,8 @@ class ResWaveApiService {
       return TeamRequestModel.fromJson(jsonDecode(res.body));
     } else {
       final err = jsonDecode(res.body);
-      throw ResWaveApiException(err['detail'] ?? 'Failed to create team call', res.statusCode);
+      throw ResWaveApiException(
+          err['detail'] ?? 'Failed to create team call', res.statusCode);
     }
   }
 
@@ -623,12 +719,15 @@ class ResWaveApiService {
     );
     if (res.statusCode != 200) {
       final err = jsonDecode(res.body);
-      throw ResWaveApiException(err['detail'] ?? 'Application submission failed', res.statusCode);
+      throw ResWaveApiException(
+          err['detail'] ?? 'Application submission failed', res.statusCode);
     }
   }
 
   Future<List<dynamic>> getTeamRequestApplications(String reqId) async {
-    final res = await http.get(Uri.parse('$baseUrl/v1/team-requests/$reqId/applications'), headers: _headers);
+    final res = await http.get(
+        Uri.parse('$baseUrl/v1/team-requests/$reqId/applications'),
+        headers: _headers);
     if (res.statusCode == 200) {
       return jsonDecode(res.body);
     } else {
@@ -644,12 +743,14 @@ class ResWaveApiService {
     );
     if (res.statusCode != 200) {
       final err = jsonDecode(res.body);
-      throw ResWaveApiException(err['detail'] ?? 'Failed to update application', res.statusCode);
+      throw ResWaveApiException(
+          err['detail'] ?? 'Failed to update application', res.statusCode);
     }
   }
 
   Future<List<ProjectModel>> getMyProjects() async {
-    final res = await http.get(Uri.parse('$baseUrl/v1/projects'), headers: _headers);
+    final res =
+        await http.get(Uri.parse('$baseUrl/v1/projects'), headers: _headers);
     if (res.statusCode == 200) {
       final List list = jsonDecode(res.body);
       return list.map((e) => ProjectModel.fromJson(e)).toList();
@@ -659,7 +760,8 @@ class ResWaveApiService {
   }
 
   Future<List<ProjectTaskModel>> getProjectTasks(String projId) async {
-    final res = await http.get(Uri.parse('$baseUrl/v1/projects/$projId/tasks'), headers: _headers);
+    final res = await http.get(Uri.parse('$baseUrl/v1/projects/$projId/tasks'),
+        headers: _headers);
     if (res.statusCode == 200) {
       final List list = jsonDecode(res.body);
       return list.map((e) => ProjectTaskModel.fromJson(e)).toList();
@@ -668,11 +770,13 @@ class ResWaveApiService {
     }
   }
 
-  Future<ProjectTaskModel> addProjectTask(String projId, String title, {String priority = 'Medium', String? dueDate}) async {
+  Future<ProjectTaskModel> addProjectTask(String projId, String title,
+      {String priority = 'Medium', String? dueDate}) async {
     final res = await http.post(
       Uri.parse('$baseUrl/v1/projects/$projId/tasks'),
       headers: _headers,
-      body: jsonEncode({'title': title, 'priority': priority, 'dueDate': dueDate}),
+      body: jsonEncode(
+          {'title': title, 'priority': priority, 'dueDate': dueDate}),
     );
     if (res.statusCode == 200) {
       return ProjectTaskModel.fromJson(jsonDecode(res.body));
@@ -681,7 +785,8 @@ class ResWaveApiService {
     }
   }
 
-  Future<void> updateProjectTask(String projId, String taskId, Map<String, dynamic> updates) async {
+  Future<void> updateProjectTask(
+      String projId, String taskId, Map<String, dynamic> updates) async {
     final res = await http.put(
       Uri.parse('$baseUrl/v1/projects/$projId/tasks/$taskId'),
       headers: _headers,
@@ -692,8 +797,11 @@ class ResWaveApiService {
     }
   }
 
-  Future<List<ProjectMilestoneModel>> getProjectMilestones(String projId) async {
-    final res = await http.get(Uri.parse('$baseUrl/v1/projects/$projId/milestones'), headers: _headers);
+  Future<List<ProjectMilestoneModel>> getProjectMilestones(
+      String projId) async {
+    final res = await http.get(
+        Uri.parse('$baseUrl/v1/projects/$projId/milestones'),
+        headers: _headers);
     if (res.statusCode == 200) {
       final List list = jsonDecode(res.body);
       return list.map((e) => ProjectMilestoneModel.fromJson(e)).toList();
@@ -702,7 +810,8 @@ class ResWaveApiService {
     }
   }
 
-  Future<ProjectMilestoneModel> addProjectMilestone(String projId, String title, {String? dueDate}) async {
+  Future<ProjectMilestoneModel> addProjectMilestone(String projId, String title,
+      {String? dueDate}) async {
     final res = await http.post(
       Uri.parse('$baseUrl/v1/projects/$projId/milestones'),
       headers: _headers,
@@ -716,7 +825,8 @@ class ResWaveApiService {
   }
 
   Future<List<GroupModel>> getGroups({String? domain}) async {
-    final uri = Uri.parse('$baseUrl/v1/groups${domain != null ? '?domain=$domain' : ''}');
+    final uri = Uri.parse(
+        '$baseUrl/v1/groups${domain != null ? '?domain=$domain' : ''}');
     final res = await http.get(uri);
     if (res.statusCode == 200) {
       final List list = jsonDecode(res.body);
@@ -740,7 +850,8 @@ class ResWaveApiService {
   }
 
   Future<void> joinGroup(String groupId) async {
-    final res = await http.post(Uri.parse('$baseUrl/v1/groups/$groupId/join'), headers: _headers);
+    final res = await http.post(Uri.parse('$baseUrl/v1/groups/$groupId/join'),
+        headers: _headers);
     if (res.statusCode != 200) {
       throw ResWaveApiException('Failed to join group', res.statusCode);
     }
@@ -748,7 +859,8 @@ class ResWaveApiService {
 
   // ==================== Well-Being (Section 10) ====================
   Future<List<MoodEntry>> getMyMoods() async {
-    final res = await http.get(Uri.parse('$baseUrl/v1/wellbeing/moods'), headers: _headers);
+    final res = await http.get(Uri.parse('$baseUrl/v1/wellbeing/moods'),
+        headers: _headers);
     if (res.statusCode == 200) {
       final List list = jsonDecode(res.body);
       return list.map((e) => MoodEntry.fromJson(e)).toList();
@@ -766,35 +878,42 @@ class ResWaveApiService {
     if (res.statusCode == 200) {
       return MoodEntry.fromJson(jsonDecode(res.body));
     } else {
-      throw ResWaveApiException('Failed to save mood reflection', res.statusCode);
+      throw ResWaveApiException(
+          'Failed to save mood reflection', res.statusCode);
     }
   }
 
   Future<void> deleteMood(String mid) async {
-    final res = await http.delete(Uri.parse('$baseUrl/v1/wellbeing/moods/$mid'), headers: _headers);
+    final res = await http.delete(Uri.parse('$baseUrl/v1/wellbeing/moods/$mid'),
+        headers: _headers);
     if (res.statusCode != 200) {
-      throw ResWaveApiException('Failed to delete mood reflection', res.statusCode);
+      throw ResWaveApiException(
+          'Failed to delete mood reflection', res.statusCode);
     }
   }
 
-  Future<List<OpportunityModel>> getOpportunities({String? type, String? mode}) async {
+  Future<List<OpportunityModel>> getOpportunities(
+      {String? type, String? mode}) async {
     final params = <String, String>{};
     if (type != null) params['type'] = type;
     if (mode != null) params['mode'] = mode;
 
-    final uri = Uri.parse('$baseUrl/v1/opportunities').replace(queryParameters: params);
+    final uri =
+        Uri.parse('$baseUrl/v1/opportunities').replace(queryParameters: params);
     final res = await http.get(uri);
     if (res.statusCode == 200) {
       final List list = jsonDecode(res.body);
       return list.map((e) => OpportunityModel.fromJson(e)).toList();
     } else {
-      throw ResWaveApiException('Failed to fetch opportunities', res.statusCode);
+      throw ResWaveApiException(
+          'Failed to fetch opportunities', res.statusCode);
     }
   }
 
   // ==================== Notifications (Section 12 & 19) ====================
   Future<List<NotificationModel>> getNotifications() async {
-    final res = await http.get(Uri.parse('$baseUrl/v1/notifications'), headers: _headers);
+    final res = await http.get(Uri.parse('$baseUrl/v1/notifications'),
+        headers: _headers);
     if (res.statusCode == 200) {
       final List list = jsonDecode(res.body);
       return list.map((e) => NotificationModel.fromJson(e)).toList();
@@ -804,27 +923,54 @@ class ResWaveApiService {
   }
 
   Future<void> markNotificationRead(String notifId) async {
-    final res = await http.post(Uri.parse('$baseUrl/v1/notifications/$notifId/read'), headers: _headers);
+    final res = await http.post(
+        Uri.parse('$baseUrl/v1/notifications/$notifId/read'),
+        headers: _headers);
     if (res.statusCode != 200) {
       throw ResWaveApiException('Failed to mark read', res.statusCode);
     }
   }
 
   Future<void> markAllNotificationsRead() async {
-    final res = await http.post(Uri.parse('$baseUrl/v1/notifications/mark-all-read'), headers: _headers);
+    final res = await http.post(
+        Uri.parse('$baseUrl/v1/notifications/mark-all-read'),
+        headers: _headers);
     if (res.statusCode != 200) {
       throw ResWaveApiException('Failed to mark all read', res.statusCode);
     }
   }
 
-  Future<void> registerFcmToken(String token) async {
+  Future<void> registerFcmToken(
+    String token, {
+    String? deviceInfo,
+  }) async {
     final res = await http.post(
+      Uri.parse('$baseUrl/v1/notifications/fcm-token'),
+      headers: _headers,
+      body: jsonEncode({
+        'token': token,
+        if (deviceInfo != null) 'deviceInfo': deviceInfo,
+      }),
+    );
+    if (res.statusCode != 200) {
+      throw ResWaveApiException(
+        'Failed to register this device for notifications',
+        res.statusCode,
+      );
+    }
+  }
+
+  Future<void> unregisterFcmToken(String token) async {
+    final res = await http.delete(
       Uri.parse('$baseUrl/v1/notifications/fcm-token'),
       headers: _headers,
       body: jsonEncode({'token': token}),
     );
     if (res.statusCode != 200) {
-      // Non-critical, ignore error
+      throw ResWaveApiException(
+        'Failed to remove this device from notifications',
+        res.statusCode,
+      );
     }
   }
 }

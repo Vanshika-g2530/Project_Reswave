@@ -5,13 +5,19 @@ import '../../services/api_client.dart';
 import '../messages/chat_screen.dart';
 
 class NetworkScreen extends StatefulWidget {
-  const NetworkScreen({super.key});
+  final int initialTabIndex;
+
+  const NetworkScreen({
+    super.key,
+    this.initialTabIndex = 0,
+  });
 
   @override
   State<NetworkScreen> createState() => _NetworkScreenState();
 }
 
-class _NetworkScreenState extends State<NetworkScreen> with SingleTickerProviderStateMixin {
+class _NetworkScreenState extends State<NetworkScreen>
+    with SingleTickerProviderStateMixin {
   late TabController _tabController;
   final ResWaveApiService _apiService = ResWaveApiService();
 
@@ -28,7 +34,11 @@ class _NetworkScreenState extends State<NetworkScreen> with SingleTickerProvider
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 5, vsync: this);
+    _tabController = TabController(
+      length: 5,
+      initialIndex: widget.initialTabIndex.clamp(0, 4).toInt(),
+      vsync: this,
+    );
     _loadAllNetworkData();
   }
 
@@ -71,31 +81,38 @@ class _NetworkScreenState extends State<NetworkScreen> with SingleTickerProvider
     try {
       await _apiService.acceptConnectionRequest(reqId);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Connection accepted! Direct messaging unlocked.'), backgroundColor: AppColors.success),
+        const SnackBar(
+            content: Text('Connection accepted! Direct messaging unlocked.'),
+            backgroundColor: AppColors.success),
       );
       _loadAllNetworkData();
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Error: $e')));
     }
   }
 
   Future<void> _declineRequest(String reqId) async {
     try {
       await _apiService.declineConnectionRequest(reqId);
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Request declined.')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Request declined.')));
       _loadAllNetworkData();
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Error: $e')));
     }
   }
 
   Future<void> _withdrawRequest(String reqId) async {
     try {
       await _apiService.withdrawConnectionRequest(reqId);
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Request withdrawn.')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Request withdrawn.')));
       _loadAllNetworkData();
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Error: $e')));
     }
   }
 
@@ -103,11 +120,15 @@ class _NetworkScreenState extends State<NetworkScreen> with SingleTickerProvider
     try {
       final isNowFollowing = await _apiService.toggleFollow(targetUid);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(isNowFollowing ? 'Following researcher' : 'Unfollowed researcher')),
+        SnackBar(
+            content: Text(isNowFollowing
+                ? 'Following researcher'
+                : 'Unfollowed researcher')),
       );
       _loadAllNetworkData();
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Error: $e')));
     }
   }
 
@@ -142,14 +163,19 @@ class _NetworkScreenState extends State<NetworkScreen> with SingleTickerProvider
                     padding: const EdgeInsets.all(12),
                     child: TextField(
                       decoration: InputDecoration(
-                        hintText: 'Search researchers, institutions, or roles...',
+                        hintText:
+                            'Search researchers, institutions, or roles...',
                         prefixIcon: const Icon(Icons.search, size: 20),
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                        contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 10),
                         filled: true,
                         fillColor: AppColors.darkSurface,
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+                        border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10),
+                            borderSide: BorderSide.none),
                       ),
-                      onChanged: (val) => setState(() => _searchQuery = val.toLowerCase()),
+                      onChanged: (val) =>
+                          setState(() => _searchQuery = val.toLowerCase()),
                     ),
                   ),
                   Expanded(
@@ -179,7 +205,8 @@ class _NetworkScreenState extends State<NetworkScreen> with SingleTickerProvider
         .toList();
 
     if (filtered.isEmpty) {
-      return _buildEmptyState('No connections yet', 'Explore the Discover tab to connect with peers and mentors.');
+      return _buildEmptyState('No connections yet',
+          'Explore the Discover tab to connect with peers and mentors.');
     }
 
     return ListView.builder(
@@ -192,14 +219,23 @@ class _NetworkScreenState extends State<NetworkScreen> with SingleTickerProvider
           child: ListTile(
             leading: CircleAvatar(
               backgroundColor: AppColors.primaryTeal,
-              child: Text(c.displayName.isNotEmpty ? c.displayName[0] : 'U', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+              child: Text(c.displayName.isNotEmpty ? c.displayName[0] : 'U',
+                  style: const TextStyle(
+                      fontWeight: FontWeight.bold, color: Colors.white)),
             ),
-            title: Text(c.displayName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-            subtitle: Text('${c.role} • ${c.institution ?? c.country ?? ""}', style: const TextStyle(fontSize: 12, color: AppColors.darkTextSecondary)),
+            title: Text(c.displayName,
+                style:
+                    const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+            subtitle: Text('${c.role} • ${c.institution ?? c.country ?? ""}',
+                style: const TextStyle(
+                    fontSize: 12, color: AppColors.darkTextSecondary)),
             trailing: ElevatedButton.icon(
               icon: const Icon(Icons.chat_bubble_outline_rounded, size: 14),
               label: const Text('Message', style: TextStyle(fontSize: 12)),
-              style: ElevatedButton.styleFrom(backgroundColor: AppColors.primaryTeal, padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6)),
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primaryTeal,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6)),
               onPressed: () {
                 Navigator.push(
                   context,
@@ -221,7 +257,8 @@ class _NetworkScreenState extends State<NetworkScreen> with SingleTickerProvider
 
   Widget _buildReceivedTab() {
     if (_receivedRequests.isEmpty) {
-      return _buildEmptyState('No pending requests', 'You do not have any incoming connection requests.');
+      return _buildEmptyState('No pending requests',
+          'You do not have any incoming connection requests.');
     }
 
     return ListView.builder(
@@ -240,15 +277,23 @@ class _NetworkScreenState extends State<NetworkScreen> with SingleTickerProvider
                   children: [
                     CircleAvatar(
                       backgroundColor: AppColors.primaryTeal,
-                      child: Text(r.senderName.isNotEmpty ? r.senderName[0] : 'U', style: const TextStyle(color: Colors.white)),
+                      child: Text(
+                          r.senderName.isNotEmpty ? r.senderName[0] : 'U',
+                          style: const TextStyle(color: Colors.white)),
                     ),
                     const SizedBox(width: 12),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(r.senderName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-                          Text('${r.senderRole ?? ""} • ${r.senderInstitution ?? ""}', style: const TextStyle(fontSize: 12, color: AppColors.darkTextSecondary)),
+                          Text(r.senderName,
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.bold, fontSize: 15)),
+                          Text(
+                              '${r.senderRole ?? ""} • ${r.senderInstitution ?? ""}',
+                              style: const TextStyle(
+                                  fontSize: 12,
+                                  color: AppColors.darkTextSecondary)),
                         ],
                       ),
                     ),
@@ -258,8 +303,12 @@ class _NetworkScreenState extends State<NetworkScreen> with SingleTickerProvider
                   const SizedBox(height: 10),
                   Container(
                     padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(color: AppColors.darkBackground, borderRadius: BorderRadius.circular(6)),
-                    child: Text('"${r.note}"', style: const TextStyle(fontSize: 12, fontStyle: FontStyle.italic)),
+                    decoration: BoxDecoration(
+                        color: AppColors.darkBackground,
+                        borderRadius: BorderRadius.circular(6)),
+                    child: Text('"${r.note}"',
+                        style: const TextStyle(
+                            fontSize: 12, fontStyle: FontStyle.italic)),
                   ),
                 ],
                 const SizedBox(height: 12),
@@ -272,7 +321,8 @@ class _NetworkScreenState extends State<NetworkScreen> with SingleTickerProvider
                     ),
                     const SizedBox(width: 8),
                     ElevatedButton(
-                      style: ElevatedButton.styleFrom(backgroundColor: AppColors.primaryTeal),
+                      style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.primaryTeal),
                       onPressed: () => _acceptRequest(r.id),
                       child: const Text('Accept Connection'),
                     ),
@@ -288,7 +338,8 @@ class _NetworkScreenState extends State<NetworkScreen> with SingleTickerProvider
 
   Widget _buildSentTab() {
     if (_sentRequests.isEmpty) {
-      return _buildEmptyState('No sent requests', 'Sent connection requests awaiting response appear here.');
+      return _buildEmptyState('No sent requests',
+          'Sent connection requests awaiting response appear here.');
     }
 
     return ListView.builder(
@@ -303,11 +354,16 @@ class _NetworkScreenState extends State<NetworkScreen> with SingleTickerProvider
               backgroundColor: AppColors.darkSurfaceVariant,
               child: Text(r.receiverName.isNotEmpty ? r.receiverName[0] : 'U'),
             ),
-            title: Text(r.receiverName, style: const TextStyle(fontWeight: FontWeight.bold)),
-            subtitle: Text('Pending acceptance • ${r.receiverInstitution ?? ""}', style: const TextStyle(fontSize: 12, color: AppColors.darkTextSecondary)),
+            title: Text(r.receiverName,
+                style: const TextStyle(fontWeight: FontWeight.bold)),
+            subtitle: Text(
+                'Pending acceptance • ${r.receiverInstitution ?? ""}',
+                style: const TextStyle(
+                    fontSize: 12, color: AppColors.darkTextSecondary)),
             trailing: TextButton(
               onPressed: () => _withdrawRequest(r.id),
-              child: const Text('Withdraw', style: TextStyle(color: AppColors.error)),
+              child: const Text('Withdraw',
+                  style: TextStyle(color: AppColors.error)),
             ),
           ),
         );
@@ -317,7 +373,8 @@ class _NetworkScreenState extends State<NetworkScreen> with SingleTickerProvider
 
   Widget _buildFollowersTab() {
     if (_followers.isEmpty) {
-      return _buildEmptyState('No followers yet', 'Researchers who subscribe to your research updates will appear here.');
+      return _buildEmptyState('No followers yet',
+          'Researchers who subscribe to your research updates will appear here.');
     }
 
     return ListView.builder(
@@ -330,10 +387,14 @@ class _NetworkScreenState extends State<NetworkScreen> with SingleTickerProvider
           child: ListTile(
             leading: CircleAvatar(
               backgroundColor: AppColors.primaryTeal,
-              child: Text(f.displayName.isNotEmpty ? f.displayName[0] : 'U', style: const TextStyle(color: Colors.white)),
+              child: Text(f.displayName.isNotEmpty ? f.displayName[0] : 'U',
+                  style: const TextStyle(color: Colors.white)),
             ),
-            title: Text(f.displayName, style: const TextStyle(fontWeight: FontWeight.bold)),
-            subtitle: Text('${f.role} • ${f.institution ?? ""}', style: const TextStyle(fontSize: 12, color: AppColors.darkTextSecondary)),
+            title: Text(f.displayName,
+                style: const TextStyle(fontWeight: FontWeight.bold)),
+            subtitle: Text('${f.role} • ${f.institution ?? ""}',
+                style: const TextStyle(
+                    fontSize: 12, color: AppColors.darkTextSecondary)),
             trailing: OutlinedButton(
               onPressed: () => _toggleFollow(f.userId),
               child: Text(f.isFollowing ? 'Following' : 'Follow Back'),
@@ -346,7 +407,8 @@ class _NetworkScreenState extends State<NetworkScreen> with SingleTickerProvider
 
   Widget _buildFollowingTab() {
     if (_following.isEmpty) {
-      return _buildEmptyState('Not following anyone yet', 'Follow researchers in your field to see their public research updates.');
+      return _buildEmptyState('Not following anyone yet',
+          'Follow researchers in your field to see their public research updates.');
     }
 
     return ListView.builder(
@@ -359,10 +421,14 @@ class _NetworkScreenState extends State<NetworkScreen> with SingleTickerProvider
           child: ListTile(
             leading: CircleAvatar(
               backgroundColor: AppColors.primaryTeal,
-              child: Text(f.displayName.isNotEmpty ? f.displayName[0] : 'U', style: const TextStyle(color: Colors.white)),
+              child: Text(f.displayName.isNotEmpty ? f.displayName[0] : 'U',
+                  style: const TextStyle(color: Colors.white)),
             ),
-            title: Text(f.displayName, style: const TextStyle(fontWeight: FontWeight.bold)),
-            subtitle: Text('${f.role} • ${f.institution ?? ""}', style: const TextStyle(fontSize: 12, color: AppColors.darkTextSecondary)),
+            title: Text(f.displayName,
+                style: const TextStyle(fontWeight: FontWeight.bold)),
+            subtitle: Text('${f.role} • ${f.institution ?? ""}',
+                style: const TextStyle(
+                    fontSize: 12, color: AppColors.darkTextSecondary)),
             trailing: OutlinedButton(
               onPressed: () => _toggleFollow(f.userId),
               child: const Text('Following'),
@@ -380,11 +446,17 @@ class _NetworkScreenState extends State<NetworkScreen> with SingleTickerProvider
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.people_outline_rounded, size: 56, color: AppColors.darkTextMuted),
+            const Icon(Icons.people_outline_rounded,
+                size: 56, color: AppColors.darkTextMuted),
             const SizedBox(height: 14),
-            Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            Text(title,
+                style:
+                    const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
             const SizedBox(height: 6),
-            Text(subtitle, textAlign: TextAlign.center, style: const TextStyle(fontSize: 12, color: AppColors.darkTextSecondary)),
+            Text(subtitle,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                    fontSize: 12, color: AppColors.darkTextSecondary)),
           ],
         ),
       ),

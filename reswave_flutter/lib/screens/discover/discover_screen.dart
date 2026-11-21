@@ -4,13 +4,19 @@ import '../../models/opportunity.dart';
 import '../../services/api_client.dart';
 
 class DiscoverScreen extends StatefulWidget {
-  const DiscoverScreen({super.key});
+  final int initialTabIndex;
+
+  const DiscoverScreen({
+    super.key,
+    this.initialTabIndex = 0,
+  });
 
   @override
   State<DiscoverScreen> createState() => _DiscoverScreenState();
 }
 
-class _DiscoverScreenState extends State<DiscoverScreen> with SingleTickerProviderStateMixin {
+class _DiscoverScreenState extends State<DiscoverScreen>
+    with SingleTickerProviderStateMixin {
   late TabController _tabController;
   final ResWaveApiService _apiService = ResWaveApiService();
 
@@ -29,7 +35,11 @@ class _DiscoverScreenState extends State<DiscoverScreen> with SingleTickerProvid
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(
+      length: 3,
+      initialIndex: widget.initialTabIndex.clamp(0, 2).toInt(),
+      vsync: this,
+    );
     _loadAllDiscoverData();
   }
 
@@ -94,34 +104,44 @@ class _DiscoverScreenState extends State<DiscoverScreen> with SingleTickerProvid
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('${researcher['role']} • ${researcher['institution'] ?? ""}', style: const TextStyle(fontSize: 12, color: AppColors.darkTextSecondary)),
+            Text('${researcher['role']} • ${researcher['institution'] ?? ""}',
+                style: const TextStyle(
+                    fontSize: 12, color: AppColors.darkTextSecondary)),
             const SizedBox(height: 14),
             TextField(
               controller: noteController,
               maxLines: 3,
               decoration: const InputDecoration(
                 labelText: 'Personalized Note (Optional)',
-                hintText: 'e.g. I noticed our shared research interests in HCI and usability metrics...',
+                hintText:
+                    'e.g. I noticed our shared research interests in HCI and usability metrics...',
               ),
             ),
           ],
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: AppColors.primaryTeal),
+            style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primaryTeal),
             onPressed: () async {
               Navigator.pop(ctx);
               try {
-                await _apiService.sendConnectionRequest(researcher['userId'], note: noteController.text.trim());
+                await _apiService.sendConnectionRequest(researcher['userId'],
+                    note: noteController.text.trim());
                 if (mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Connection request sent to ${researcher['displayName']}!'), backgroundColor: AppColors.success),
+                    SnackBar(
+                        content: Text(
+                            'Connection request sent to ${researcher['displayName']}!'),
+                        backgroundColor: AppColors.success),
                   );
                 }
               } catch (e) {
                 if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+                  ScaffoldMessenger.of(context)
+                      .showSnackBar(SnackBar(content: Text('Error: $e')));
                 }
               }
             },
@@ -133,7 +153,9 @@ class _DiscoverScreenState extends State<DiscoverScreen> with SingleTickerProvid
   }
 
   void _showMentorRequestDialog(Map<String, dynamic> mentor) {
-    String selectedHelp = (mentor['helpTypes'] as List).isNotEmpty ? mentor['helpTypes'][0] : 'Methodology & Topic Selection';
+    String selectedHelp = (mentor['helpTypes'] as List).isNotEmpty
+        ? mentor['helpTypes'][0]
+        : 'Methodology & Topic Selection';
     final contextController = TextEditingController();
     String selectedFormat = 'Remote';
 
@@ -141,7 +163,8 @@ class _DiscoverScreenState extends State<DiscoverScreen> with SingleTickerProvid
       context: context,
       isScrollControlled: true,
       backgroundColor: AppColors.darkSurface,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (ctx) => Padding(
         padding: EdgeInsets.only(
           bottom: MediaQuery.of(ctx).viewInsets.bottom + 20,
@@ -154,11 +177,17 @@ class _DiscoverScreenState extends State<DiscoverScreen> with SingleTickerProvid
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Request Mentorship: ${mentor['displayName']}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              Text('Request Mentorship: ${mentor['displayName']}',
+                  style: const TextStyle(
+                      fontSize: 18, fontWeight: FontWeight.bold)),
               const SizedBox(height: 4),
-              Text('${mentor['institution'] ?? ""} • ${mentor['remainingCapacity']} slot(s) open', style: const TextStyle(fontSize: 12, color: AppColors.brightTeal)),
+              Text(
+                  '${mentor['institution'] ?? ""} • ${mentor['remainingCapacity']} slot(s) open',
+                  style: const TextStyle(
+                      fontSize: 12, color: AppColors.brightTeal)),
               const Divider(height: 24),
-              const Text('1. What help do you need? *', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+              const Text('1. What help do you need? *',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
               const SizedBox(height: 6),
               DropdownButtonFormField<String>(
                 value: selectedHelp,
@@ -168,25 +197,40 @@ class _DiscoverScreenState extends State<DiscoverScreen> with SingleTickerProvid
                   'Experiment design and data analysis',
                   'Paper writing and publication feedback',
                   'Career guidance and PhD advice',
-                ].map((h) => DropdownMenuItem(value: h, child: Text(h, style: const TextStyle(fontSize: 12)))).toList(),
+                ]
+                    .map((h) => DropdownMenuItem(
+                        value: h,
+                        child: Text(h, style: const TextStyle(fontSize: 12))))
+                    .toList(),
                 onChanged: (v) => selectedHelp = v ?? selectedHelp,
               ),
               const SizedBox(height: 14),
-              const Text('2. Research context & specific question * (min 20 chars)', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+              const Text(
+                  '2. Research context & specific question * (min 20 chars)',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
               const SizedBox(height: 6),
               TextField(
                 controller: contextController,
                 maxLines: 3,
                 decoration: const InputDecoration(
-                  hintText: 'Briefly describe your current research question, challenges, and what guidance you are seeking...',
+                  hintText:
+                      'Briefly describe your current research question, challenges, and what guidance you are seeking...',
                 ),
               ),
               const SizedBox(height: 14),
-              const Text('3. Preferred Mentoring Format:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+              const Text('3. Preferred Mentoring Format:',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
               const SizedBox(height: 6),
               DropdownButtonFormField<String>(
                 value: selectedFormat,
-                items: ['Remote', 'Online video call', 'Asynchronous feedback', 'Hybrid'].map((f) => DropdownMenuItem(value: f, child: Text(f))).toList(),
+                items: [
+                  'Remote',
+                  'Online video call',
+                  'Asynchronous feedback',
+                  'Hybrid'
+                ]
+                    .map((f) => DropdownMenuItem(value: f, child: Text(f)))
+                    .toList(),
                 onChanged: (v) => selectedFormat = v ?? selectedFormat,
               ),
               const SizedBox(height: 20),
@@ -194,11 +238,14 @@ class _DiscoverScreenState extends State<DiscoverScreen> with SingleTickerProvid
                 width: double.infinity,
                 height: 48,
                 child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(backgroundColor: AppColors.primaryTeal),
+                  style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primaryTeal),
                   onPressed: () async {
                     final ctxText = contextController.text.trim();
                     if (ctxText.length < 20) {
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please provide at least 20 characters of context.')));
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                          content: Text(
+                              'Please provide at least 20 characters of context.')));
                       return;
                     }
                     Navigator.pop(ctx);
@@ -212,12 +259,16 @@ class _DiscoverScreenState extends State<DiscoverScreen> with SingleTickerProvid
                       );
                       if (mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('Mentorship request sent to ${mentor['displayName']}!'), backgroundColor: AppColors.success),
+                          SnackBar(
+                              content: Text(
+                                  'Mentorship request sent to ${mentor['displayName']}!'),
+                              backgroundColor: AppColors.success),
                         );
                       }
                     } catch (e) {
                       if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+                        ScaffoldMessenger.of(context)
+                            .showSnackBar(SnackBar(content: Text('Error: $e')));
                       }
                     }
                   },
@@ -260,17 +311,21 @@ class _DiscoverScreenState extends State<DiscoverScreen> with SingleTickerProvid
   }
 
   Widget _buildResearchersTab() {
-    if (_loadingResearchers) return const Center(child: CircularProgressIndicator());
+    if (_loadingResearchers)
+      return const Center(child: CircularProgressIndicator());
     if (_errorResearchers != null) {
       return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.wifi_off_rounded, size: 48, color: AppColors.darkTextMuted),
+            const Icon(Icons.wifi_off_rounded,
+                size: 48, color: AppColors.darkTextMuted),
             const SizedBox(height: 12),
-            const Text('Could not fetch matches', style: TextStyle(color: AppColors.darkTextSecondary)),
+            const Text('Could not fetch matches',
+                style: TextStyle(color: AppColors.darkTextSecondary)),
             const SizedBox(height: 12),
-            ElevatedButton(onPressed: _fetchResearchers, child: const Text('Retry')),
+            ElevatedButton(
+                onPressed: _fetchResearchers, child: const Text('Retry')),
           ],
         ),
       );
@@ -307,28 +362,45 @@ class _DiscoverScreenState extends State<DiscoverScreen> with SingleTickerProvid
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text(m['displayName'] ?? '', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                      Text(m['displayName'] ?? '',
+                          style: const TextStyle(
+                              fontWeight: FontWeight.bold, fontSize: 16)),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 3),
                         decoration: BoxDecoration(
                           color: AppColors.primaryTeal.withValues(alpha: 0.25),
                           borderRadius: BorderRadius.circular(4),
                           border: Border.all(color: AppColors.brightTeal),
                         ),
-                        child: Text('${m['fitBand']} (${score.toInt()}%)', style: const TextStyle(color: AppColors.brightTeal, fontSize: 11, fontWeight: FontWeight.bold)),
+                        child: Text('${m['fitBand']} (${score.toInt()}%)',
+                            style: const TextStyle(
+                                color: AppColors.brightTeal,
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold)),
                       ),
                     ],
                   ),
                   const SizedBox(height: 4),
-                  Text('${m['role']} • ${m['institution'] ?? m['country']}', style: const TextStyle(fontSize: 12, color: AppColors.darkTextSecondary)),
-                  if (m['headline'] != null && (m['headline'] as String).isNotEmpty) ...[
+                  Text('${m['role']} • ${m['institution'] ?? m['country']}',
+                      style: const TextStyle(
+                          fontSize: 12, color: AppColors.darkTextSecondary)),
+                  if (m['headline'] != null &&
+                      (m['headline'] as String).isNotEmpty) ...[
                     const SizedBox(height: 6),
-                    Text(m['headline'], style: const TextStyle(fontSize: 13, height: 1.3)),
+                    Text(m['headline'],
+                        style: const TextStyle(fontSize: 13, height: 1.3)),
                   ],
                   if (reasons.isNotEmpty) ...[
                     const SizedBox(height: 8),
-                    const Text('Why this match:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: AppColors.darkTextMuted)),
-                    ...reasons.map((r) => Text('• $r', style: const TextStyle(fontSize: 11, color: AppColors.darkTextSecondary))),
+                    const Text('Why this match:',
+                        style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 11,
+                            color: AppColors.darkTextMuted)),
+                    ...reasons.map((r) => Text('• $r',
+                        style: const TextStyle(
+                            fontSize: 11, color: AppColors.darkTextSecondary))),
                   ],
                   const SizedBox(height: 12),
                   Align(
@@ -336,7 +408,8 @@ class _DiscoverScreenState extends State<DiscoverScreen> with SingleTickerProvid
                     child: ElevatedButton.icon(
                       icon: const Icon(Icons.person_add_outlined, size: 16),
                       label: const Text('Connect'),
-                      style: ElevatedButton.styleFrom(backgroundColor: AppColors.primaryTeal),
+                      style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.primaryTeal),
                       onPressed: () => _showConnectDialog(m),
                     ),
                   ),
@@ -350,17 +423,21 @@ class _DiscoverScreenState extends State<DiscoverScreen> with SingleTickerProvid
   }
 
   Widget _buildMentorsTab() {
-    if (_loadingMentors) return const Center(child: CircularProgressIndicator());
+    if (_loadingMentors)
+      return const Center(child: CircularProgressIndicator());
     if (_errorMentors != null) {
       return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.wifi_off_rounded, size: 48, color: AppColors.darkTextMuted),
+            const Icon(Icons.wifi_off_rounded,
+                size: 48, color: AppColors.darkTextMuted),
             const SizedBox(height: 12),
-            const Text('Could not fetch mentors', style: TextStyle(color: AppColors.darkTextSecondary)),
+            const Text('Could not fetch mentors',
+                style: TextStyle(color: AppColors.darkTextSecondary)),
             const SizedBox(height: 12),
-            ElevatedButton(onPressed: _fetchMentors, child: const Text('Retry')),
+            ElevatedButton(
+                onPressed: _fetchMentors, child: const Text('Retry')),
           ],
         ),
       );
@@ -397,39 +474,52 @@ class _DiscoverScreenState extends State<DiscoverScreen> with SingleTickerProvid
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text(mentor['displayName'] ?? '', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                      Text(mentor['displayName'] ?? '',
+                          style: const TextStyle(
+                              fontWeight: FontWeight.bold, fontSize: 16)),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 3),
                         decoration: BoxDecoration(
                           color: AppColors.brightTeal.withValues(alpha: 0.15),
                           borderRadius: BorderRadius.circular(4),
                         ),
-                        child: Text('${mentor['remainingCapacity']} Slots Open', style: const TextStyle(color: AppColors.brightTeal, fontSize: 11, fontWeight: FontWeight.bold)),
+                        child: Text('${mentor['remainingCapacity']} Slots Open',
+                            style: const TextStyle(
+                                color: AppColors.brightTeal,
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold)),
                       ),
                     ],
                   ),
                   const SizedBox(height: 4),
-                  Text('${mentor['institution'] ?? ""}', style: const TextStyle(fontSize: 12, color: AppColors.darkTextSecondary)),
+                  Text('${mentor['institution'] ?? ""}',
+                      style: const TextStyle(
+                          fontSize: 12, color: AppColors.darkTextSecondary)),
                   const SizedBox(height: 8),
                   Wrap(
                     spacing: 6,
                     runSpacing: 4,
                     children: expertise
                         .map((e) => Chip(
-                              label: Text(e, style: const TextStyle(fontSize: 10)),
+                              label:
+                                  Text(e, style: const TextStyle(fontSize: 10)),
                               backgroundColor: AppColors.darkBackground,
                             ))
                         .toList(),
                   ),
                   if (reasons.isNotEmpty) ...[
                     const SizedBox(height: 8),
-                    ...reasons.map((r) => Text('• $r', style: const TextStyle(fontSize: 11, color: AppColors.darkTextSecondary))),
+                    ...reasons.map((r) => Text('• $r',
+                        style: const TextStyle(
+                            fontSize: 11, color: AppColors.darkTextSecondary))),
                   ],
                   const SizedBox(height: 12),
                   Align(
                     alignment: Alignment.centerRight,
                     child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(backgroundColor: AppColors.primaryTeal),
+                      style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.primaryTeal),
                       onPressed: () => _showMentorRequestDialog(mentor),
                       child: const Text('Request Mentorship'),
                     ),
@@ -444,17 +534,21 @@ class _DiscoverScreenState extends State<DiscoverScreen> with SingleTickerProvid
   }
 
   Widget _buildOpportunitiesTab() {
-    if (_loadingOpportunities) return const Center(child: CircularProgressIndicator());
+    if (_loadingOpportunities)
+      return const Center(child: CircularProgressIndicator());
     if (_errorOpportunities != null) {
       return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.wifi_off_rounded, size: 48, color: AppColors.darkTextMuted),
+            const Icon(Icons.wifi_off_rounded,
+                size: 48, color: AppColors.darkTextMuted),
             const SizedBox(height: 12),
-            const Text('Could not fetch academic listings', style: TextStyle(color: AppColors.darkTextSecondary)),
+            const Text('Could not fetch academic listings',
+                style: TextStyle(color: AppColors.darkTextSecondary)),
             const SizedBox(height: 12),
-            ElevatedButton(onPressed: _fetchOpportunities, child: const Text('Retry')),
+            ElevatedButton(
+                onPressed: _fetchOpportunities, child: const Text('Retry')),
           ],
         ),
       );
@@ -480,20 +574,35 @@ class _DiscoverScreenState extends State<DiscoverScreen> with SingleTickerProvid
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Expanded(child: Text(opp.title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15))),
+                      Expanded(
+                          child: Text(opp.title,
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.bold, fontSize: 15))),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(color: AppColors.warning.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(4)),
-                        child: Text(opp.type, style: const TextStyle(color: AppColors.warning, fontSize: 10, fontWeight: FontWeight.bold)),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                            color: AppColors.warning.withValues(alpha: 0.2),
+                            borderRadius: BorderRadius.circular(4)),
+                        child: Text(opp.type,
+                            style: const TextStyle(
+                                color: AppColors.warning,
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold)),
                       ),
                     ],
                   ),
                   const SizedBox(height: 4),
-                  Text('${opp.organiser} • ${opp.mode}', style: const TextStyle(fontSize: 12, color: AppColors.darkTextSecondary)),
+                  Text('${opp.organiser} • ${opp.mode}',
+                      style: const TextStyle(
+                          fontSize: 12, color: AppColors.darkTextSecondary)),
                   const SizedBox(height: 6),
-                  Text(opp.description, style: const TextStyle(fontSize: 13, height: 1.4)),
+                  Text(opp.description,
+                      style: const TextStyle(fontSize: 13, height: 1.4)),
                   const SizedBox(height: 8),
-                  Text('Admin Verified: ${opp.lastVerifiedDate}', style: const TextStyle(fontSize: 10, color: AppColors.darkTextMuted)),
+                  Text('Admin Verified: ${opp.lastVerifiedDate}',
+                      style: const TextStyle(
+                          fontSize: 10, color: AppColors.darkTextMuted)),
                 ],
               ),
             ),

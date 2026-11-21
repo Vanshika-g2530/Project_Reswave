@@ -1,8 +1,9 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../core/constants/app_colors.dart';
+import '../../models/user_model.dart';
 import '../../widgets/reswave_logo.dart';
-import '../../services/api_client.dart';
+import '../../services/auth_service.dart';
 import '../auth/welcome_screen.dart';
 import '../navigation/main_navigation_screen.dart';
 
@@ -13,11 +14,12 @@ class SplashScreen extends StatefulWidget {
   State<SplashScreen> createState() => _SplashScreenState();
 }
 
-class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderStateMixin {
+class _SplashScreenState extends State<SplashScreen>
+    with SingleTickerProviderStateMixin {
   late AnimationController _animController;
   late Animation<double> _scaleAnimation;
   late Animation<double> _fadeAnimation;
-  final ResWaveApiService _apiService = ResWaveApiService();
+  final ResWaveAuthService _authService = ResWaveAuthService.instance;
 
   @override
   void initState() {
@@ -44,13 +46,24 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
     await Future.delayed(const Duration(milliseconds: 1800));
     if (!mounted) return;
 
-    if (_apiService.isAuthenticated && _apiService.currentUser != null) {
+    UserModel? user;
+    try {
+      user = await _authService.restoreBackendSession();
+    } catch (error, stackTrace) {
+      debugPrint(
+          'Could not restore the ResWave authentication session: $error');
+      debugPrintStack(stackTrace: stackTrace);
+    }
+    if (!mounted) return;
+
+    if (user != null) {
       Navigator.pushReplacement(
         context,
         PageRouteBuilder(
           transitionDuration: const Duration(milliseconds: 400),
-          pageBuilder: (_, __, ___) => MainNavigationScreen(currentUser: _apiService.currentUser!),
-          transitionsBuilder: (_, a, __, c) => FadeTransition(opacity: a, child: c),
+          pageBuilder: (_, __, ___) => MainNavigationScreen(currentUser: user!),
+          transitionsBuilder: (_, a, __, c) =>
+              FadeTransition(opacity: a, child: c),
         ),
       );
     } else {
@@ -59,7 +72,8 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
         PageRouteBuilder(
           transitionDuration: const Duration(milliseconds: 400),
           pageBuilder: (_, __, ___) => const WelcomeScreen(),
-          transitionsBuilder: (_, a, __, c) => FadeTransition(opacity: a, child: c),
+          transitionsBuilder: (_, a, __, c) =>
+              FadeTransition(opacity: a, child: c),
         ),
       );
     }

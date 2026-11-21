@@ -3,7 +3,7 @@ RESWAVE - Core Pydantic Schemas & Data Contracts
 Implements all entities and contracts defined in Section 14 & 15.
 """
 from typing import List, Optional, Dict, Any
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel, Field, EmailStr, field_validator
 from datetime import datetime
 
 # --- Enums / String Literals as Constrained Types ---
@@ -36,7 +36,7 @@ class UserBase(BaseModel):
     roleDetails: Dict[str, Any] = Field(default_factory=dict)
 
 class UserCreate(UserBase):
-    password: str = Field(..., min_length=8)
+    password: Optional[str] = Field(None, min_length=8)
     termsAccepted: bool = True
     termsAcceptedVersion: str = "2.0"
     marketingConsent: bool = False
@@ -489,6 +489,14 @@ class ProjectMilestoneCreate(BaseModel):
     dueDate: Optional[str] = None
 
 class FCMTokenRequest(BaseModel):
-    token: str
-    deviceInfo: Optional[str] = None
+    token: str = Field(..., min_length=1, max_length=4096)
+    deviceInfo: Optional[str] = Field(None, max_length=128)
+
+    @field_validator("token")
+    @classmethod
+    def normalize_token(cls, value: str) -> str:
+        token = value.strip()
+        if not token:
+            raise ValueError("FCM token cannot be empty")
+        return token
 

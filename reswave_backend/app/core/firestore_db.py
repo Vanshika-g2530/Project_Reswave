@@ -3,21 +3,28 @@ RESWAVE - Cloud Firestore & Transaction Engine
 Implements atomic operations for team capacity, mentor reservation, connection acceptance,
 follow relationships, and audit trails.
 """
-import os
-import json
 import uuid
+import threading
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
 from ..core.memory_db import db, utc_now_iso
 
-# Check if Cloud Firestore is available
 _firestore_client = None
-try:
-    from google.cloud import firestore
-    if os.environ.get("GOOGLE_APPLICATION_CREDENTIALS") or os.environ.get("FIRESTORE_EMULATOR_HOST"):
-        _firestore_client = firestore.Client()
-except Exception:
-    _firestore_client = None
+_firestore_client_lock = threading.Lock()
+
+
+def get_firestore_client() -> Any:
+    global _firestore_client
+    if _firestore_client is not None:
+        return _firestore_client
+
+    with _firestore_client_lock:
+        if _firestore_client is None:
+            from firebase_admin import firestore
+            from ..services.security import get_firebase_admin_app
+
+            _firestore_client = firestore.client(app=get_firebase_admin_app())
+    return _firestore_client
 
 class FirestoreTransactionEngine:
     """
@@ -238,4 +245,7 @@ class FirestoreTransactionEngine:
             "createdAt": utc_now_iso()
         }
         db.notifications[nid] = notif
+        from ..services.notification_service import FCMNotificationService
+
+        FCMNotificationService.send_to_user(recipient_id, notif)
         return notif

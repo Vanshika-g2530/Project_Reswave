@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "475471441324",
+    "project_id": "reswave",
+    "storage_bucket": "reswave.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:475471441324:android:c12859eabe2f77b3441e09",
+        "android_client_info": {
+          "package_name": "org.reswave.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCIuT-4HHsdi4uGKvc6nw_2OFniOF1rfjE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

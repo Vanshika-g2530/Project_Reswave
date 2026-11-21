@@ -1,7 +1,8 @@
 """
 RESWAVE - Domain Recommendation Engine
-Section 4.3: Deterministic tag matching with proportional redistribution on skipped questions.
+Section 4.3: Deterministic, explainable tag matching.
 """
+
 from typing import List, Dict, Any, Tuple
 
 DEFAULT_WEIGHTS = {
@@ -12,115 +13,159 @@ DEFAULT_WEIGHTS = {
     "goals": 0.10
 }
 
-def calculate_jaccard_overlap(user_tags: List[str], domain_tags: List[str]) -> float:
-    if not user_tags or not domain_tags:
+IGNORED_TAGS = {"not sure", "skip", "other", ""}
+
+
+def normalize_tags(tags):
+    return {
+        str(tag).strip().lower()
+        for tag in (tags or [])
+        if str(tag).strip().lower() not in IGNORED_TAGS
+    }
+
+
+def calculate_jaccard_overlap(
+    user_tags: List[str],
+    domain_tags: List[str]
+) -> float:
+
+    user_set = normalize_tags(user_tags)
+    domain_set = normalize_tags(domain_tags)
+
+    if not user_set or not domain_set:
         return 0.0
-    u_set = {t.strip().lower() for t in user_tags if t.strip().lower() not in ["not sure", "other", "skip"]}
-    d_set = {t.strip().lower() for t in domain_tags}
-    if not u_set:
+
+    union = user_set.union(domain_set)
+
+    if not union:
         return 0.0
-    intersection = u_set.intersection(d_set)
-    return len(intersection) / len(u_set)
+
+    intersection = user_set.intersection(domain_set)
+
+    return len(intersection) / len(union)
+
 
 def score_domain_against_questionnaire(
-    answers: Dict[str, Any], 
-    domain: Dict[str, Any]
+    domain: Dict[str, Any],
+    answers: Dict[str, Any],
+    is_exploratory: bool = False
 ) -> Tuple[float, List[str]]:
-    """
-    Computes explainable score for a domain using the 5 weighted dimensions.
-    Returns (score_out_of_100, list_of_reasons).
-    """
-    # Count answered questions
-    answered_keys = []
-    for k in ["subjects", "problems", "workStyles", "skills", "goals"]:
-        val = answers.get(k, [])
-        valid_items = [x for x in val if x and x.lower() not in ["not sure", "skip"]]
-        if valid_items:
-            answered_keys.append(k)
-            
-    # If fewer than 2 answered, return exploratory baseline (score = 50.0)
-    if len(answered_keys) < 2:
-        return 50.0, ["Broad exploratory suggestion based on foundational research areas"]
 
-    # Proportional weight redistribution
-    base_weight_sum = sum(DEFAULT_WEIGHTS[k] for k in answered_keys)
-    normalized_weights = {k: DEFAULT_WEIGHTS[k] / base_weight_sum for k in answered_keys}
+    if is_exploratory:
+        return 50.0, [
+            "Explore this domain to discover whether it matches your interests."
+        ]
+
+    tag_mapping = {
+        "subjects": "subjectTags",
+        "problems": "problemTags",
+        "workStyles": "workStyleTags",
+        "skills": "skillTags",
+        "goals": "goalTags"
+    }
+
+    answered = {}
+
+    for key, domain_key in tag_mapping.items():
+        tags = normalize_tags(answers.get(key, []))
+
+        if tags:
+            answered[key] = tags
+
+    if len(answered) < 2:
+        return 50.0, [
+            "Explore this domain to discover your research interests."
+        ]
+
+    total_weight = sum(DEFAULT_WEIGHTS[k] for k in answered)
+
+    if total_weight == 0:
+        return 50.0, ["Explore this domain further."]
 
     reasons = []
     total_score = 0.0
 
-    # 1. Subject Interest (30%)
-    if "subjects" in answered_keys:
-        subj_score = calculate_jaccard_overlap(answers.get("subjects", []), domain.get("subjectTags", []))
-        total_score += subj_score * normalized_weights["subjects"]
-        if subj_score > 0:
-            matched = set(s.lower() for s in answers.get("subjects", [])).intersection(
-                set(s.lower() for s in domain.get("subjectTags", []))
+    for key, domain_key in tag_mapping.items():
+
+        if key not in answered:
+            continue
+
+        user_tags = answered[key]
+        domain_tags = normalize_tags(domain.get(domain_key, []))
+
+        overlap = user_tags.intersection(domain_tags)
+
+        weight = DEFAULT_WEIGHTS[key] / total_weight
+
+        similarity = calculate_jaccard_overlap(
+            list(user_tags),
+            list(domain_tags)
+        )
+
+        total_score += similarity * weight
+
+        if overlap:
+            matched = ", ".join(sorted(overlap))
+            reasons.append(
+                f"Matches your {key} interests: {matched.title()}."
             )
-            reasons.append(f"Matches your subject interest in {', '.join(matched).title()}")
 
-    # 2. Problem Types (25%)
-    if "problems" in answered_keys:
-        prob_score = calculate_jaccard_overlap(answers.get("problems", []), domain.get("problemTags", []))
-        total_score += prob_score * normalized_weights["problems"]
-        if prob_score > 0:
-            matched = set(s.lower() for s in answers.get("problems", [])).intersection(
-                set(s.lower() for s in domain.get("problemTags", []))
+    # Optional free-text topic matching
+    topic = (answers.get("topicInMind") or "").strip()
+
+    if len(topic) > 2:
+
+        searchable = []
+
+        for key in ["keywords", "subdomains"]:
+            searchable.extend(domain.get(key, []))
+
+        topic_words = {
+            word.lower().strip(".,!?")
+            for word in topic.split()
+            if len(word) > 3
+        }
+
+        searchable_text = " ".join(
+            str(item).lower() for item in searchable
+        )
+
+        matched_words = [
+            word for word in topic_words
+            if word in searchable_text
+        ]
+
+        if matched_words:
+            total_score = min(1.0, total_score + 0.10)
+
+            reasons.append(
+                f"Your topic relates to this domain through: "
+                f"{', '.join(matched_words)}."
             )
-            reasons.append(f"Aligns with problems you want to address: {', '.join(matched).title()}")
-
-    # 3. Work Styles (20%)
-    if "workStyles" in answered_keys:
-        style_score = calculate_jaccard_overlap(answers.get("workStyles", []), domain.get("workStyleTags", []))
-        total_score += style_score * normalized_weights["workStyles"]
-        if style_score > 0:
-            matched = set(s.lower() for s in answers.get("workStyles", [])).intersection(
-                set(s.lower() for s in domain.get("workStyleTags", []))
-            )
-            reasons.append(f"Involves your preferred work style: {', '.join(matched).title()}")
-
-    # 4. Skills (15%)
-    if "skills" in answered_keys:
-        skill_score = calculate_jaccard_overlap(answers.get("skills", []), domain.get("skillTags", []))
-        total_score += skill_score * normalized_weights["skills"]
-        if skill_score > 0:
-            matched = set(s.lower() for s in answers.get("skills", [])).intersection(
-                set(s.lower() for s in domain.get("skillTags", []))
-            )
-            reasons.append(f"Applies skills you have or wish to develop: {', '.join(matched).title()}")
-
-    # 5. Goal (10%)
-    if "goals" in answered_keys:
-        goal_score = calculate_jaccard_overlap(answers.get("goals", []), domain.get("goalTags", []))
-        total_score += goal_score * normalized_weights["goals"]
-        if goal_score > 0:
-            reasons.append("Supports your declared academic & research milestone goals")
-
-    # Optional topic in mind keyword boost
-    topic_in_mind = answers.get("topicInMind", "")
-    if topic_in_mind and len(topic_in_mind.strip()) > 2:
-        words = [w.lower() for w in topic_in_mind.split() if len(w) > 3]
-        domain_keywords = [k.lower() for k in domain.get("keywords", []) + domain.get("subdomains", [])]
-        if any(w in " ".join(domain_keywords) for w in words):
-            total_score = min(1.0, total_score + 0.1)
-            reasons.append(f"Directly relates to your specific interest: '{topic_in_mind.strip()}'")
 
     final_score = round(total_score * 100, 1)
+
     if not reasons:
-        reasons.append("Foundational interdisciplinary alignment with your profile")
+        reasons.append(
+            "This domain may offer an interdisciplinary research direction."
+        )
 
     return final_score, reasons
 
-def determine_fit_band(score: float, is_exploratory: bool = False) -> str:
-    """
-    Section 4.3: Display fit band: Strong / Possible / Explore.
-    No decimal precision or career certainty claims.
-    """
+
+def determine_fit_band(
+    score: float,
+    is_exploratory: bool = False
+) -> str:
+
     if is_exploratory:
         return "Explore"
-    if score >= 65.0:
+
+    if score >= 65:
         return "Strong"
-    elif score >= 35.0:
+
+    if score >= 35:
         return "Possible"
-    else:
-        return "Explore"
+
+    return "Explore"
+

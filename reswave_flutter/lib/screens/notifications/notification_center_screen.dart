@@ -2,12 +2,14 @@ import 'package:flutter/material.dart';
 import '../../core/constants/app_colors.dart';
 import '../../models/notification_model.dart';
 import '../../services/api_client.dart';
+import '../../services/push_notification_service.dart';
 
 class NotificationCenterScreen extends StatefulWidget {
   const NotificationCenterScreen({super.key});
 
   @override
-  State<NotificationCenterScreen> createState() => _NotificationCenterScreenState();
+  State<NotificationCenterScreen> createState() =>
+      _NotificationCenterScreenState();
 }
 
 class _NotificationCenterScreenState extends State<NotificationCenterScreen> {
@@ -84,7 +86,8 @@ class _NotificationCenterScreenState extends State<NotificationCenterScreen> {
         actions: [
           TextButton(
             onPressed: _notifications.isEmpty ? null : _markAllRead,
-            child: const Text('Mark all read', style: TextStyle(color: AppColors.brightTeal)),
+            child: const Text('Mark all read',
+                style: TextStyle(color: AppColors.brightTeal)),
           ),
         ],
       ),
@@ -99,14 +102,19 @@ class _NotificationCenterScreenState extends State<NotificationCenterScreen> {
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            const Icon(Icons.notifications_none_rounded, size: 56, color: AppColors.darkTextMuted),
+                            const Icon(Icons.notifications_none_rounded,
+                                size: 56, color: AppColors.darkTextMuted),
                             const SizedBox(height: 14),
-                            const Text('No notifications yet', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                            const Text('No notifications yet',
+                                style: TextStyle(
+                                    fontSize: 16, fontWeight: FontWeight.bold)),
                             const SizedBox(height: 6),
                             const Text(
                               'When peers send connection requests, mentor requests, or project updates, notifications appear here.',
                               textAlign: TextAlign.center,
-                              style: TextStyle(fontSize: 12, color: AppColors.darkTextSecondary),
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  color: AppColors.darkTextSecondary),
                             ),
                           ],
                         ),
@@ -120,10 +128,14 @@ class _NotificationCenterScreenState extends State<NotificationCenterScreen> {
                         final isRead = n.read;
                         return Card(
                           margin: const EdgeInsets.only(bottom: 10),
-                          color: isRead ? AppColors.darkSurface : AppColors.darkSurfaceVariant,
+                          color: isRead
+                              ? AppColors.darkSurface
+                              : AppColors.darkSurfaceVariant,
                           child: ListTile(
                             leading: CircleAvatar(
-                              backgroundColor: isRead ? AppColors.darkBackground : AppColors.primaryTeal,
+                              backgroundColor: isRead
+                                  ? AppColors.darkBackground
+                                  : AppColors.primaryTeal,
                               child: Icon(
                                 n.type == 'Team'
                                     ? Icons.group_add_rounded
@@ -132,18 +144,27 @@ class _NotificationCenterScreenState extends State<NotificationCenterScreen> {
                                         : n.type == 'Connection'
                                             ? Icons.person_add_alt_1_rounded
                                             : n.type == 'Message'
-                                                ? Icons.chat_bubble_outline_rounded
+                                                ? Icons
+                                                    .chat_bubble_outline_rounded
                                                 : Icons.event_note_rounded,
                                 color: Colors.white,
                                 size: 18,
                               ),
                             ),
-                            title: Text(n.title, style: TextStyle(fontWeight: isRead ? FontWeight.normal : FontWeight.bold, fontSize: 14)),
+                            title: Text(n.title,
+                                style: TextStyle(
+                                    fontWeight: isRead
+                                        ? FontWeight.normal
+                                        : FontWeight.bold,
+                                    fontSize: 14)),
                             subtitle: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 const SizedBox(height: 2),
-                                Text(n.body, style: const TextStyle(fontSize: 12, color: AppColors.darkTextSecondary)),
+                                Text(n.body,
+                                    style: const TextStyle(
+                                        fontSize: 12,
+                                        color: AppColors.darkTextSecondary)),
                               ],
                             ),
                             trailing: isRead
@@ -151,10 +172,17 @@ class _NotificationCenterScreenState extends State<NotificationCenterScreen> {
                                 : Container(
                                     width: 8,
                                     height: 8,
-                                    decoration: const BoxDecoration(color: AppColors.brightTeal, shape: BoxShape.circle),
+                                    decoration: const BoxDecoration(
+                                        color: AppColors.brightTeal,
+                                        shape: BoxShape.circle),
                                   ),
-                            onTap: () {
-                              if (!isRead) _markRead(n.id);
+                            onTap: () async {
+                              if (!isRead) await _markRead(n.id);
+                              ResWavePushNotificationService.instance
+                                  .handleNotificationTap({
+                                'targetType': n.targetType ?? '',
+                                'targetId': n.targetId ?? '',
+                              });
                             },
                           ),
                         );
